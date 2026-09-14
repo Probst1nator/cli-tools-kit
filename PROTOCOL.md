@@ -45,6 +45,9 @@ Each dict in the list describes one installable variant of the tool.
 | `capability` | str | no | — | One controlled word naming what the tool does (`scrape`, `tts`, `agent`, …). Parents that group rows use this as the group key — see "Taxonomy" below. |
 | `domain` | str | no | — | Free distinguisher inside a `capability` (`youtube`, `embedding`). |
 | `category` | str | no | — | Legacy provenance: the folder the tool came from. Nothing keys on it; new tools may omit it. |
+| `default_autostart` | bool | no | `False` | Pre-tick the parent's Auto-Start checkbox for this tool. A suggested default only — the user still owns the toggle. See "Autostart" below. |
+| `cron_schedule` | str | no | — | Schedule for a non-`Icon` tool's autostart (e.g. `"@reboot"`). Without it, a tool with no `Icon` tag has no autostart mechanism at all. |
+| `cron_args` | list[str] | no | `[]` | Args for the cron invocation, when they differ from `args`. |
 
 All of these are fields of `ToolMetadata`, and `advertise()` emits each optional
 one only when it is set. A record that never touched them is byte-identical to
@@ -91,6 +94,50 @@ Windows there is no alias file: the same `alias` becomes a launcher script
 The `alias` field is independent of `Icon`: set it to also install a bash
 alias alongside a `.desktop` file (handy for GUI tools you also want to launch
 from the terminal).
+
+## Autostart (start on login)
+
+**A tool never writes its own autostart entry.** The parent installer owns
+autostart end to end: it creates the entry, toggles it per row, and removes it
+again when the tool is removed. A tool's whole part is one advertised field.
+
+Which mechanism applies follows from `tags`:
+
+| Tool type | What the parent does on enable | Where the entry lives |
+|---|---|---|
+| has `Icon` | symlinks the tool's **installed** `.desktop` | `~/.config/autostart/<desktop_file>` (Linux) · a copy of the `.lnk` in Startup (Windows) |
+| no `Icon`, has `cron_schedule` | adds one crontab line `<schedule> <python> <script> <cron_args>` | the user's crontab |
+| no `Icon`, no `cron_schedule` | nothing — `enable_autostart` reports "no supported autostart method" | — |
+
+Opting in is declarative:
+
+```python
+advertise(ToolMetadata(
+    name="My Tool",
+    desktop_file="my_tool.desktop",
+    icon="utilities-terminal",
+    desc="Does the thing",
+    tags=["CLI", "Icon"],
+    default_autostart=True,      # pre-ticks the box; the user still decides
+))
+```
+
+Three things to know before building anything around this:
+
+- **The `Icon` entry is a symlink under the same filename**, not a second file,
+  and it runs the icon's `Exec` verbatim — entry point plus `args`, nothing else.
+  If login should do something other than your normal launch, that has to be the
+  icon's own behaviour (an argument-less menu, say), not a separate entry.
+- **Never hand-write a `.desktop` into `~/.config/autostart`.** It is a parallel
+  mechanism the parent cannot see, toggle or clean up, so it outlives removal of
+  the tool and can double up with the real entry.
+- **`default_autostart` is a suggestion, not state.** It only decides how the
+  checkbox starts out. The live answer is the entry on disk, which the user may
+  have changed since: read it with `is_autostart_enabled(tool)`.
+
+An autostart entry starts your tool with no terminal and nobody watching, so
+prefer a launch that is safe unattended and easy to interrupt over one that
+immediately seizes a session.
 
 ## Minimal example
 
