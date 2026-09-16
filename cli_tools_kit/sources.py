@@ -157,7 +157,15 @@ def save_local_root(config_path, root, local_path=None, log: Callable = print) -
         except OSError as exc:
             log(f"{local.name}: not updated ({exc})")
             return False
-    line = f'root = "{root}"\n'
+    # A TOML literal string, because a Windows root is full of backslashes and
+    # a basic string would read them as escapes: "C:\Users\..." dies on \U and
+    # takes the whole file with it, so the question would be asked again on
+    # every launch. A path holding a single quote falls back to a basic string
+    # with the two characters TOML needs escaped there.
+    if "'" in root:
+        line = 'root = "{}"\n'.format(root.replace("\\", "\\\\").replace('"', '\\"'))
+    else:
+        line = f"root = '{root}'\n"
     try:
         local.write_text(line + ("\n" + existing.lstrip("\n") if existing.strip() else ""),
                          encoding="utf-8")

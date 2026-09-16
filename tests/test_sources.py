@@ -445,6 +445,21 @@ def test_an_existing_root_in_the_local_file_is_never_overwritten(tmp_path: Path)
     assert sources.local_root(config) == str(tmp_path / "mine")
 
 
+def test_a_windows_root_survives_the_round_trip(tmp_path: Path) -> None:
+    """A backslash path must not be written as a TOML basic string.
+
+    ``root = "C:\\Users\\..."`` reads the \\U as a Unicode escape and kills the
+    whole file, so the install location was asked for again on every launch.
+    """
+    roots = [r"C:\Users\tester\WW3-tools", r"C:\temp\new\table\unicode",
+             r"C:\Users\o'brien\tools"]
+    for i, root in enumerate(roots):
+        config = _write(tmp_path / str(i) / "installer.toml", "")
+        assert sources.save_local_root(config, root, log=lambda *a: None)
+        local = config.with_name("installer.local.toml")
+        assert sources._read_toml(local).get("root") == root
+
+
 def test_the_default_root_name_names_the_suggested_folder(tmp_path: Path, engine,
                                                           monkeypatch) -> None:
     config = _tree(tmp_path)

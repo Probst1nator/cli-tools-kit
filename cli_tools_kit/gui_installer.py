@@ -5434,10 +5434,18 @@ class InstallerApp:
 # ================= CLI FUNCTIONS =================
 
 def _self_shortcut_path() -> str:
-    """The manager's own shortcut: a .desktop file, or a .lnk on Windows."""
+    """The manager's own shortcut: a .desktop file, or a .lnk on Windows.
+
+    Windows shows the file name in the Start Menu, where freedesktop reads the
+    Name= line inside the file, so the .lnk is named after SELF_DESKTOP_NAME.
+    Characters a file name cannot hold become spaces, and a name that is empty
+    or all-punctuation falls back to the desktop file's stem.
+    """
     if host.IS_WINDOWS:
-        return os.path.join(APPS_DIR,
-                            os.path.splitext(SELF_DESKTOP_FILE)[0] + ".lnk")
+        stem = "".join(" " if c in '<>:"/\\|?*' else c
+                       for c in SELF_DESKTOP_NAME).strip(" .")
+        stem = " ".join(stem.split()) or os.path.splitext(SELF_DESKTOP_FILE)[0]
+        return os.path.join(APPS_DIR, stem + ".lnk")
     return os.path.join(APPS_DIR, SELF_DESKTOP_FILE)
 
 
@@ -5470,6 +5478,15 @@ def cli_install_self(quiet: bool = False) -> tuple[bool, str]:
                                      workdir=ROOT_DIR)
             if not ok:
                 return False, f"Could not write {lnk_path}"
+            # Before 0.6.4 the .lnk was named after the desktop file's stem.
+            # Drop that one, or the Start Menu keeps both.
+            legacy = os.path.join(APPS_DIR,
+                                  os.path.splitext(SELF_DESKTOP_FILE)[0] + ".lnk")
+            if legacy != lnk_path and os.path.isfile(legacy):
+                try:
+                    os.remove(legacy)
+                except OSError:
+                    pass
             if not quiet:
                 print(f"Installed: {lnk_path}")
             return True, lnk_path
