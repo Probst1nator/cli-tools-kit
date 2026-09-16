@@ -864,3 +864,101 @@ org = "acme"
     engine["pre_discovery"](False)
     assert roots == [str(tmp_path / "org" / "tools"), str(root / "kept")]
     assert any("clone" in call for call in git_calls)
+
+
+# --- local path pins on org-derived names ------------------------------------
+
+def _org_tree(tmp_path: Path, local_body: str) -> Path:
+    """installer.toml with only an org entry, plus a local file beside it."""
+    config = _write(tmp_path / "installer.toml", """
+[[source]]
+org = "AutomatedAlchemy"
+topic = "cli-tool-kit"
+exclude = ["alchemy-installer"]
+""")
+    _write(config.with_name("installer.local.toml"), local_body)
+    return config
+
+
+def test_a_local_pin_on_an_org_derived_name_is_used_without_cloning(
+        tmp_path: Path, api, monkeypatch) -> None:
+    """The repro: a local [[source]] naming a listed repo must pin its path.
+
+    The names do not exist when installer.local.toml is read, so the override
+    can only be matched after the listing — which is what regressed: both repos
+    were cloned over the checkouts that were already there.
+    """
+    root = tmp_path / "root"
+    pinned = _repo(root / "bloggen")
+    also = _repo(root / "lernclaude")
+    config = _org_tree(tmp_path, f"""
+root = "{root}"
+
+[[source]]
+name = "BlogGen"
+path = "{pinned}"
+
+[[source]]
+name = "lernclaude-fau"
+path = "{also}"
+""")
+    api([_repo_json("BlogGen"), _repo_json("lernclaude-fau"), _repo_json("manim-kit")])
+    git_calls: list = []
+    monkeypatch.setattr(sources.subprocess, "run", _fake_git(git_calls))
+
+    expanded = sources.expand_org_sources(load_sources(config),
+                                          cache_dir=tmp_path / "cache", root=root,
+                                          log=lambda *_: None)
+    assert [(s.name, s.path) for s in expanded] == [
+        ("BlogGen", str(pinned)), ("lernclaude-fau", str(also)), ("manim-kit", None)]
+
+    resolved = resolve_sources(expanded, root, log=lambda *_: None)
+    assert resolved[:2] == [pinned, also]
+    # The listing may be fetched; the pinned repos must not be cloned.
+    assert not any("clone" in call and "BlogGen" in " ".join(call)
+                   for call in git_calls)
+    assert not any("clone" in call and "lernclaude" in " ".join(call)
+                   for call in git_calls)
+
+
+def test_a_local_pin_whose_path_is_gone_still_clones(tmp_path: Path, api,
+                                                     monkeypatch) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    config = _org_tree(tmp_path, f"""
+root = "{root}"
+
+[[source]]
+name = "BlogGen"
+path = "{tmp_path / 'never-checked-out'}"
+""")
+    api([_repo_json("BlogGen")])
+    git_calls: list = []
+    monkeypatch.setattr(sources.subprocess, "run", _fake_git(git_calls))
+    expanded = sources.expand_org_sources(load_sources(config),
+                                          cache_dir=tmp_path / "cache", root=root,
+                                          log=lambda *_: None)
+    assert expanded[0].url == "https://github.com/acme/BlogGen.git"
+    assert resolve_sources(expanded, root, log=lambda *_: None) == [root / "BlogGen"]
+    assert any("clone" in call for call in git_calls)
+
+
+def test_a_tracked_explicit_source_still_wins_over_the_listing(tmp_path: Path,
+                                                               api) -> None:
+    """The older rule is unchanged: a tracked [[source]] replaces the repo."""
+    fork = _repo(tmp_path / "fork")
+    config = _write(tmp_path / "installer.toml", f"""
+[[source]]
+name = "BlogGen"
+path = "{fork}"
+
+[[source]]
+org = "acme"
+""")
+    api([_repo_json("BlogGen"), _repo_json("manim-kit")])
+    expanded = sources.expand_org_sources(load_sources(config),
+                                          cache_dir=tmp_path / "cache",
+                                          log=lambda *_: None)
+    assert [(s.name, s.path, s.url) for s in expanded] == [
+        ("BlogGen", str(fork), None),
+        ("manim-kit", None, "https://github.com/acme/manim-kit.git")]

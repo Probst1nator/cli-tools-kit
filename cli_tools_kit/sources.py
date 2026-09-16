@@ -145,6 +145,15 @@ class OrgSource:
     topic: str = DEFAULT_ORG_TOPIC
     include: Tuple[str, ...] = ()
     exclude: Tuple[str, ...] = ()
+    # ``installer.local.toml``'s ``[[source]]`` path overrides, as already
+    # absolute paths keyed by repo name. A listed repo whose name is in here
+    # resolves to that checkout instead of being cloned, exactly as the
+    # override works for a tracked ``[[source]]``. A tuple of pairs, not a
+    # dict, because this dataclass is frozen and has to stay hashable.
+    pins: Tuple[Tuple[str, str], ...] = ()
+
+    def pin_for(self, name: str) -> Optional[str]:
+        return dict(self.pins).get(name)
 
 
 # --- TOML -------------------------------------------------------------------
@@ -243,7 +252,8 @@ def _names(entry: dict, key: str) -> Tuple[str, ...]:
     return tuple(item for item in raw if isinstance(item, str) and item)
 
 
-def _org_source(entry: dict, config_name: str, log: Callable) -> Optional[OrgSource]:
+def _org_source(entry: dict, config_name: str, log: Callable,
+                pins: Tuple[Tuple[str, str], ...] = ()) -> Optional[OrgSource]:
     """One ``[[source]]`` table with an ``org``, or None when it is unusable.
 
     Reported and dropped the same way an https-only violation is: one line
@@ -263,7 +273,8 @@ def _org_source(entry: dict, config_name: str, log: Callable) -> Optional[OrgSou
         return None
     return OrgSource(org=org, topic=topic,
                      include=_names(entry, "include"),
-                     exclude=_names(entry, "exclude"))
+                     exclude=_names(entry, "exclude"),
+                     pins=pins)
 
 
 def load_sources(config_path, local_path=None, log: Callable = print) -> List:
@@ -288,6 +299,13 @@ def load_sources(config_path, local_path=None, log: Callable = print) -> List:
                  for entry in local.get("source") or []
                  if isinstance(entry, dict) and entry.get("name")}
 
+    # The same overrides an explicit [[source]] gets, kept for the org
+    # expansion: the repos it derives do not exist yet at this point, so a pin
+    # naming one of them can only be applied later, by name.
+    pins = tuple((name, _absolute(local_path.parent, entry["path"]))
+                 for name, entry in overrides.items()
+                 if isinstance(entry.get("path"), str) and entry["path"])
+
     sources: List = []
     for entry in data.get("source") or []:
         if not isinstance(entry, dict):
@@ -295,7 +313,7 @@ def load_sources(config_path, local_path=None, log: Callable = print) -> List:
         name = entry.get("name")
         if not name:
             if "org" in entry:
-                org_source = _org_source(entry, config_path.name, log)
+                org_source = _org_source(entry, config_path.name, log, pins)
                 if org_source is not None:
                     sources.append(org_source)
                 continue
@@ -514,7 +532,9 @@ def expand_org_sources(sources: Sequence, *, refresh: bool = False, cache_dir,
 
     An explicit ``[[source]]`` with the same ``name`` wins, so one repo can be
     pinned to a fork or a local checkout while the rest of the org follows the
-    listing.
+    listing. A ``path`` in ``installer.local.toml`` naming a listed repo pins it
+    the same way, carried here on ``OrgSource.pins`` because the repo it names
+    does not exist yet when that file is read.
 
     ``clone=False`` is the network-free path the login check takes: it uses the
     cache, then the directories already under ``root``, and never fetches.
@@ -538,6 +558,13 @@ def expand_org_sources(sources: Sequence, *, refresh: bool = False, cache_dir,
                 f"({provenance})")
             derived = [Source(name=repo["name"], url=repo.get("clone_url"))
                        for repo in kept]
+        # A local pin wins over the clone URL, so the checkout on this machine
+        # is used and nothing is fetched. A pin whose directory is gone is left
+        # in place: _resolve_one falls through to the URL, which is what the
+        # override does for a tracked source too.
+        derived = [Source(name=candidate.name, url=candidate.url,
+                          path=source.pin_for(candidate.name) or candidate.path)
+                   for candidate in derived]
         for candidate in derived:
             if candidate.name in explicit:
                 continue

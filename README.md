@@ -369,7 +369,9 @@ combined with `url` or `path`, and an explicit `[[source]]` with the same `name`
 as a listed repo wins, so one tool can be pinned to a fork or a local checkout
 while the rest of the org follows the listing. Archived repos are left out.
 `include` is an allowlist and overrides `exclude`; the topic is required either
-way.
+way. A `path` in `installer.local.toml` pins a listed repo by its name just as it
+pins a tracked source, so a checkout already on the machine is used instead of
+being cloned.
 
 The listing is one `GET` to `api.github.com`, cached for a day under the
 identity's cache directory, and `--refresh` fetches again. With the GitHub CLI
