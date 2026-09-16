@@ -523,3 +523,344 @@ def test_run_installer_refuses_to_have_its_own_arguments_overridden(tmp_path: Pa
         sources.run_installer(config, argv=[], discovery_roots=["/x"])
     with pytest.raises(TypeError):
         sources.run_installer(config, argv=[], pre_discovery=lambda refresh: None)
+
+
+# --- GitHub org sources -----------------------------------------------------
+
+def _repo_json(name: str, topics=("cli-tool-kit",), archived: bool = False,
+               scheme: str = "https") -> dict:
+    return {"name": name, "clone_url": f"{scheme}://github.com/acme/{name}.git",
+            "topics": list(topics), "archived": archived,
+            "default_branch": "main", "description": f"the {name} tool"}
+
+
+def _fake_urlopen(pages, calls: list):
+    """A urlopen stand-in serving canned pages of JSON.
+
+    ``pages`` is a list of repo lists, one per requested page; anything past
+    the end is served as an empty page, which is how GitHub ends a listing.
+    """
+    import io
+    import json as _json
+
+    class Response(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_):
+            self.close()
+            return False
+
+    def urlopen(request, timeout=None):
+        calls.append(request.full_url)
+        page = 1
+        for part in request.full_url.split("?")[-1].split("&"):
+            if part.startswith("page="):
+                page = int(part[len("page="):])
+        body = pages[page - 1] if page <= len(pages) else []
+        return Response(_json.dumps(body).encode("utf-8"))
+
+    return urlopen
+
+
+@pytest.fixture
+def no_gh(monkeypatch):
+    """No GitHub CLI on this host, so the listing stays anonymous."""
+    monkeypatch.setattr(sources.shutil, "which", lambda name: None)
+
+
+@pytest.fixture
+def api(monkeypatch, no_gh):
+    """Serve canned listings and record the URLs that were requested."""
+    calls: list = []
+
+    def serve(*pages):
+        monkeypatch.setattr(sources.urllib.request, "urlopen",
+                            _fake_urlopen(list(pages), calls))
+        return calls
+
+    return serve
+
+
+def _expand(tmp_path: Path, entry, lines=None, **kwargs):
+    return sources.expand_org_sources(
+        [entry], cache_dir=tmp_path / "cache",
+        log=(lines.append if lines is not None else (lambda *_: None)), **kwargs)
+
+
+def test_only_topic_tagged_repos_become_sources(tmp_path: Path, api) -> None:
+    api([_repo_json("kept"), _repo_json("other", topics=("website",))])
+    expanded = _expand(tmp_path, sources.OrgSource(org="acme"))
+    assert [(s.name, s.url) for s in expanded] == [
+        ("kept", "https://github.com/acme/kept.git")]
+
+
+def test_archived_repos_are_left_out(tmp_path: Path, api) -> None:
+    api([_repo_json("live"), _repo_json("old", archived=True)])
+    assert [s.name for s in _expand(tmp_path, sources.OrgSource(org="acme"))] == ["live"]
+
+
+def test_a_listing_is_read_across_pages(tmp_path: Path, api) -> None:
+    first = [_repo_json(f"tool{i:02d}") for i in range(100)]
+    calls = api(first, [_repo_json("last")])
+    expanded = _expand(tmp_path, sources.OrgSource(org="acme"))
+    assert len(expanded) == 101
+    assert expanded[-1].name == "last"
+    assert len(calls) == 2 and "page=2" in calls[1]
+    assert all(call.startswith("https://api.github.com/orgs/acme/repos?") for call in calls)
+
+
+def test_an_http_only_clone_url_is_refused(tmp_path: Path, api) -> None:
+    api([_repo_json("plain", scheme="http")])
+    lines: list = []
+    assert _expand(tmp_path, sources.OrgSource(org="acme"), lines) == []
+    assert any("not an https:// URL" in line for line in lines)
+
+
+def test_a_cached_listing_within_the_ttl_makes_no_call(tmp_path: Path, api) -> None:
+    calls = api([_repo_json("kept")])
+    entry = sources.OrgSource(org="acme")
+    assert len(_expand(tmp_path, entry)) == 1
+    assert len(calls) == 1
+    assert [s.name for s in _expand(tmp_path, entry)] == ["kept"]
+    assert len(calls) == 1                     # the cache answered the second time
+
+
+def test_refresh_fetches_although_the_cache_is_fresh(tmp_path: Path, api) -> None:
+    calls = api([_repo_json("kept")])
+    entry = sources.OrgSource(org="acme")
+    _expand(tmp_path, entry)
+    _expand(tmp_path, entry, refresh=True)
+    assert len(calls) == 2
+
+
+def test_a_stale_cache_is_used_when_the_listing_fails(tmp_path: Path, api,
+                                                      monkeypatch) -> None:
+    api([_repo_json("kept")])
+    entry = sources.OrgSource(org="acme")
+    _expand(tmp_path, entry)
+    cache = tmp_path / "cache" / "org-acme.json"
+    payload = sources.json.loads(cache.read_text(encoding="utf-8"))
+    payload["fetched_at"] -= 10 * 24 * 3600            # ten days old
+    cache.write_text(sources.json.dumps(payload), encoding="utf-8")
+
+    def boom(request, timeout=None):
+        raise sources.urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", boom)
+    lines: list = []
+    assert [s.name for s in _expand(tmp_path, entry, lines)] == ["kept"]
+    assert any("not listed, using the cached listing from" in line for line in lines)
+
+
+def test_no_cache_and_no_network_falls_back_to_the_root(tmp_path: Path,
+                                                        monkeypatch, no_gh) -> None:
+    root = tmp_path / "root"
+    _repo(root / "on-disk")
+    _repo(root / "skipped")
+
+    def boom(request, timeout=None):
+        raise sources.urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", boom)
+    lines: list = []
+    expanded = _expand(tmp_path, sources.OrgSource(org="acme", exclude=("skipped",)),
+                       lines, root=root)
+    assert [(s.name, s.path) for s in expanded] == [
+        ("on-disk", str((root / "on-disk").resolve()))]
+    assert any("no listing and no cache" in line for line in lines)
+
+
+def test_the_root_fallback_cannot_tell_which_directories_are_the_orgs(
+        tmp_path: Path, monkeypatch, no_gh) -> None:
+    """Without a listing there is nothing to match names against.
+
+    So the last resort offers every directory under the root that ``exclude``
+    does not name. A directory that holds no tool advertises nothing and the
+    walker drops it, which is what keeps this safe rather than clever.
+    """
+    root = tmp_path / "root"
+    _repo(root / "a-tool")
+    (root / "not-a-repo").mkdir(parents=True)
+
+    def boom(request, timeout=None):
+        raise sources.urllib.error.URLError("no route to host")
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", boom)
+    expanded = _expand(tmp_path, sources.OrgSource(org="acme"), root=root)
+    assert [s.name for s in expanded] == ["a-tool", "not-a-repo"]
+
+
+def test_the_network_free_path_never_fetches(tmp_path: Path, monkeypatch,
+                                             no_gh) -> None:
+    root = tmp_path / "root"
+    _repo(root / "on-disk")
+
+    def refuse(request, timeout=None):
+        raise AssertionError("clone=False reached the network")
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", refuse)
+    expanded = _expand(tmp_path, sources.OrgSource(org="acme"), root=root, clone=False)
+    assert [s.name for s in expanded] == ["on-disk"]
+
+
+def test_clone_false_prefers_the_cache_over_the_root(tmp_path: Path, api,
+                                                     monkeypatch) -> None:
+    root = tmp_path / "root"
+    _repo(root / "on-disk")
+    entry = sources.OrgSource(org="acme")
+    api([_repo_json("kept")])
+    _expand(tmp_path, entry)                   # fills the cache
+
+    def refuse(request, timeout=None):
+        raise AssertionError("clone=False reached the network")
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", refuse)
+    assert [s.name for s in _expand(tmp_path, entry, root=root, clone=False)] == ["kept"]
+
+
+def test_an_explicit_source_wins_over_the_org_listing(tmp_path: Path, api) -> None:
+    api([_repo_json("kept"), _repo_json("pinned")])
+    fork = _repo(tmp_path / "fork")
+    expanded = sources.expand_org_sources(
+        [Source(name="pinned", path=str(fork)), sources.OrgSource(org="acme")],
+        cache_dir=tmp_path / "cache", log=lambda *_: None)
+    assert [(s.name, s.path, s.url) for s in expanded] == [
+        ("pinned", str(fork), None),
+        ("kept", None, "https://github.com/acme/kept.git")]
+
+
+def test_exclude_drops_a_repo_and_include_is_an_allowlist(tmp_path: Path, api) -> None:
+    listing = [_repo_json("a"), _repo_json("b"), _repo_json("c"),
+               _repo_json("untagged", topics=("website",))]
+    api(listing)
+    assert [s.name for s in _expand(tmp_path, sources.OrgSource(org="acme",
+                                                                exclude=("b",)))] \
+        == ["a", "c"]
+    # include wins over exclude, and the topic is still required.
+    assert [s.name for s in _expand(
+        tmp_path / "second", sources.OrgSource(org="acme", include=("b", "untagged"),
+                                               exclude=("b",)))] == ["b"]
+
+
+def test_the_list_header_names_the_count_the_topic_and_the_age(tmp_path: Path,
+                                                               api) -> None:
+    api([_repo_json("a"), _repo_json("b")])
+    lines: list = []
+    _expand(tmp_path, sources.OrgSource(org="acme"), lines)
+    assert lines[0] == "acme: 2 repos tagged cli-tool-kit (listed just now)"
+
+
+def test_a_shrinking_listing_is_reported(tmp_path: Path, api, monkeypatch) -> None:
+    calls = api([_repo_json("a"), _repo_json("b"), _repo_json("c")])
+    entry = sources.OrgSource(org="acme")
+    _expand(tmp_path, entry)
+    monkeypatch.setattr(sources.urllib.request, "urlopen",
+                        _fake_urlopen([[_repo_json("a")]], calls))
+    lines: list = []
+    _expand(tmp_path, entry, lines, refresh=True)
+    assert any("2 repos dropped since the last listing: b, c" in line for line in lines)
+
+
+def test_a_token_from_the_gh_cli_is_sent_and_never_logged(tmp_path: Path,
+                                                          monkeypatch) -> None:
+    calls: list = []
+    monkeypatch.setattr(sources.shutil, "which", lambda name: "/usr/bin/gh")
+
+    class Result:
+        returncode = 0
+        stdout = "gho_secret\n"
+        stderr = ""
+
+    monkeypatch.setattr(sources.subprocess, "run", lambda cmd, **kw: Result())
+    headers: list = []
+    inner = _fake_urlopen([[_repo_json("kept")]], calls)
+
+    def urlopen(request, timeout=None):
+        headers.append(dict(request.headers))
+        return inner(request, timeout=timeout)
+
+    monkeypatch.setattr(sources.urllib.request, "urlopen", urlopen)
+    lines: list = []
+    assert [s.name for s in _expand(tmp_path, sources.OrgSource(org="acme"),
+                                    lines)] == ["kept"]
+    assert headers[0].get("Authorization") == "Bearer gho_secret"
+    # With a token the private repos are wanted too, so the filter comes off.
+    assert "type=public" not in calls[0]
+    assert not any("gho_secret" in line for line in lines)
+    cached = (tmp_path / "cache" / "org-acme.json").read_text(encoding="utf-8")
+    assert "gho_secret" not in cached
+
+
+# --- reading org entries out of the TOML file --------------------------------
+
+def test_an_org_entry_is_loaded_as_an_org_source(tmp_path: Path) -> None:
+    config = _write(tmp_path / "installer.toml", """
+[[source]]
+org = "AutomatedAlchemy"
+topic = "cli-tool-kit"
+exclude = ["alchemy-installer"]
+
+[[source]]
+name = "org/tools"
+path = "."
+""")
+    loaded = load_sources(config)
+    assert loaded[0] == sources.OrgSource(org="AutomatedAlchemy", topic="cli-tool-kit",
+                                          include=(), exclude=("alchemy-installer",))
+    assert loaded[1] == Source(name="org/tools", path=str(tmp_path))
+
+
+def test_the_topic_defaults_when_it_is_omitted(tmp_path: Path) -> None:
+    config = _write(tmp_path / "installer.toml", '[[source]]\norg = "acme"\n')
+    assert load_sources(config)[0].topic == sources.DEFAULT_ORG_TOPIC
+
+
+@pytest.mark.parametrize("body, complaint", [
+    ('org = "acme/sub"', "unusable org"),
+    ('org = "' + "a" * 40 + '"', "unusable org"),
+    ('org = ""', "unusable org"),
+    ('org = 7', "unusable org"),
+    ('org = "acme"\ntopic = "not a topic"', "not a usable topic"),
+    ('org = "acme"\nurl = "https://example.invalid/x.git"', "both org and url/path"),
+    ('org = "acme"\npath = "."', "both org and url/path"),
+    ('name = "acme"\norg = "acme"', "both org and url/path"),
+])
+def test_an_unusable_org_entry_is_reported_and_dropped(tmp_path: Path, body: str,
+                                                       complaint: str) -> None:
+    config = _write(tmp_path / "installer.toml", f"[[source]]\n{body}\n")
+    lines: list = []
+    assert load_sources(config, log=lines.append) == []
+    assert any(complaint in line for line in lines)
+
+
+def test_resolve_sources_ignores_an_unexpanded_org_entry(tmp_path: Path) -> None:
+    given = _repo(tmp_path / "given")
+    resolved = resolve_sources([sources.OrgSource(org="acme"),
+                                Source(name="lab", path=str(given))],
+                               tmp_path / "root")
+    assert resolved == [given]
+
+
+def test_run_installer_expands_an_org_entry_in_the_hook(tmp_path: Path, engine,
+                                                        api, monkeypatch) -> None:
+    config = _write(_repo(tmp_path / "org" / "tools") / "installer.toml", """
+[[source]]
+name = "org/tools"
+path = "."
+
+[[source]]
+org = "acme"
+""")
+    api([_repo_json("kept")])
+    git_calls: list = []
+    monkeypatch.setattr(sources.subprocess, "run", _fake_git(git_calls))
+    monkeypatch.chdir(tmp_path)
+    root = tmp_path / "root"
+    root.mkdir()
+    sources.run_installer(config, argv=["--root", str(root)])
+    roots = engine["discovery_roots"]
+    assert roots == [str(tmp_path / "org" / "tools")]       # nothing fetched yet
+    engine["pre_discovery"](False)
+    assert roots == [str(tmp_path / "org" / "tools"), str(root / "kept")]
+    assert any("clone" in call for call in git_calls)
