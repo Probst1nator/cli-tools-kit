@@ -65,6 +65,11 @@ class ToolMetadata:
     # cli_tools_kit.skill_status() at advertise time and pass it in.
     skill_name: Optional[str] = None
     skill_status: Optional[str] = None
+    # Conditional autostart (PROTOCOL.md § Conditional autostart). Names the
+    # conditions this tool's autostart supports — "time_window", "network" —
+    # and nothing more: the values behind them are the user's, and the
+    # installer stores them per host. See cli_tools_kit.autostart_gate.
+    autostart_conditions: Optional[list] = None
 
 
 class ToolInstaller:

@@ -61,6 +61,14 @@ from typing import Callable, Dict, List, NamedTuple, Optional, Sequence
 
 from . import host
 from .identity import InstallerIdentity, LEGACY_IDENTITY
+from .autostart_gate import (
+    KNOWN_CONDITIONS,
+    _parse_hhmm,
+    build_exec_prefix,
+    current_ssids,
+    load_tool_conditions,
+    save_tool_conditions,
+)
 
 # Pillow renders tool icons. It is an optional extra (``cli-tools-kit[gui]``);
 # without it the GUI still runs, just without per-tool icon thumbnails, and the
@@ -255,6 +263,7 @@ class ToolEntry(NamedTuple):
     cron_args: List[str] = []        # Args to pass when running as cron job
     skill_name: str = ""             # If non-empty, tool can install a Claude Code skill via --install-skill / --uninstall-skill
     skill_status: str = ""           # Advertised skill freshness: "absent"|"current"|"stale" ("" = tool didn't report it)
+    autostart_conditions: List[str] = []  # Conditions this tool's autostart supports ("time_window", "network"); the values live in the installer's autostart.json, never in the tool. See cli_tools_kit.autostart_gate.
 
 
 def _group_label(entry: "ToolEntry") -> str:
@@ -652,6 +661,10 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
                     cron_args=item.get("cron_args", []),
                     skill_name=item.get("skill_name", ""),
                     skill_status=item.get("skill_status", ""),
+                    autostart_conditions=[
+                        c for c in item.get("autostart_conditions", []) or []
+                        if c in KNOWN_CONDITIONS
+                    ],
                 ))
     except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
         # If a tool fails to advertise, it is ignored.
@@ -1382,6 +1395,92 @@ def is_autostart_enabled(tool: ToolEntry) -> bool:
     return False
 
 
+def autostart_tool_key(tool: ToolEntry) -> str:
+    """The key a tool's conditions are stored under.
+
+    The .desktop stem: stable across renames of the display name, and already
+    unique per installed shortcut.
+    """
+    return os.path.splitext(tool.desktop_file)[0]
+
+
+def get_autostart_conditions(tool: ToolEntry) -> dict:
+    """The conditions currently configured for *tool* on this host."""
+    return load_tool_conditions(IDENTITY.slug, autostart_tool_key(tool))
+
+
+def set_autostart_conditions(tool: ToolEntry, conditions: Optional[dict]) -> None:
+    """Store *tool*'s conditions, then rewrite its entry if autostart is on.
+
+    The Exec line differs between a gated and an ungated entry, so a change
+    here only takes effect once the entry is rewritten.
+    """
+    save_tool_conditions(IDENTITY.slug, autostart_tool_key(tool), conditions)
+    if is_autostart_enabled(tool):
+        enable_autostart(tool)
+
+
+def _read_desktop_exec(desktop_path: str) -> str:
+    """The Exec= line of an installed .desktop, or "" if it has none."""
+    try:
+        with open(desktop_path, "r", encoding="utf-8") as fh:
+            for line in fh:
+                if line.startswith("Exec="):
+                    return line[len("Exec="):].strip()
+    except OSError:
+        pass
+    return ""
+
+
+def _write_gated_autostart(tool: ToolEntry, desktop_path: str,
+                           autostart_path: str, conditions: dict) -> tuple[bool, str]:
+    """Write an autostart .desktop whose Exec runs *tool* through the gate.
+
+    A real file rather than the usual symlink: the app entry in the menu must
+    keep launching the tool unconditionally, so only this copy carries the
+    gate. Everything else is inherited from the installed entry.
+    """
+    exec_line = _read_desktop_exec(desktop_path)
+    if not exec_line:
+        return False, f"No Exec line in {desktop_path}"
+
+    prefix = " ".join(shlex.quote(p) for p in
+                      build_exec_prefix(IDENTITY.slug, autostart_tool_key(tool)))
+    gated_exec = f"{prefix} {exec_line}"
+
+    try:
+        with open(desktop_path, "r", encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError as e:
+        return False, f"Failed to read {desktop_path}: {e}"
+
+    out = []
+    for line in lines:
+        if line.startswith("Exec="):
+            out.append(f"Exec={gated_exec}")
+        elif line.startswith("X-CliToolsKit-Gated="):
+            continue
+        else:
+            out.append(line)
+    # Marks the entry as ours and generated, so it is obvious in a diff why
+    # this one is a file where every other autostart entry is a symlink.
+    out.append("X-CliToolsKit-Gated=true")
+
+    try:
+        if os.path.exists(autostart_path) or os.path.islink(autostart_path):
+            os.remove(autostart_path)
+        with open(autostart_path, "w", encoding="utf-8") as fh:
+            fh.write("\n".join(out) + "\n")
+        # Deliberately not executable: systemd-xdg-autostart-generator warns
+        # on every login about an executable entry in ~/.config/autostart.
+        exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        os.chmod(autostart_path, os.stat(autostart_path).st_mode & ~exec_bits)
+    except OSError as e:
+        return False, f"Failed to write {autostart_path}: {e}"
+
+    return True, f"Autostart enabled (conditional): {tool.name}"
+
+
 def enable_autostart(tool: ToolEntry) -> tuple[bool, str]:
     """Enable autostart for a tool.
 
@@ -1410,6 +1509,12 @@ def enable_autostart(tool: ToolEntry) -> tuple[bool, str]:
 
         os.makedirs(AUTOSTART_DIR, exist_ok=True)
         autostart_path = get_autostart_path(tool)
+
+        # A tool with conditions configured gets a gated copy instead of the
+        # plain symlink, so the menu entry stays unconditional.
+        conditions = get_autostart_conditions(tool)
+        if conditions:
+            return _write_gated_autostart(tool, desktop_path, autostart_path, conditions)
 
         if os.path.exists(autostart_path) or os.path.islink(autostart_path):
             os.remove(autostart_path)
@@ -1800,6 +1905,7 @@ class InstallerApp:
 
         self.check_vars: Dict[str, tk.BooleanVar] = {}
         self.autostart_vars: Dict[str, tk.BooleanVar] = {}  # Autostart checkboxes
+        self.autostart_gears: Dict[str, ttk.Label] = {}  # ⚙ beside the checkbox, for tools with conditions
         self.skill_vars: Dict[str, tk.BooleanVar] = {}      # Per-row "Skill" checkbox (only for tools with skill_name)
         self.status_labels: Dict[str, ttk.Label] = {}
         self.icon_labels: Dict[str, ttk.Label] = {}  # For displaying tool icons
@@ -2175,6 +2281,9 @@ class InstallerApp:
         self.style.configure("CardToolName.TLabel", font=("", 10, "bold"),
                              background=t["panel"], foreground=t["fg"])
         self.style.configure("CardMuted.TLabel", foreground=t["muted"], background=t["panel"])
+        # The ⚙ on an autostart row: accent once conditions are configured, so
+        # a glance at the column says which tools are gated.
+        self.style.configure("CardAccent.TLabel", foreground=t["accent"], background=t["panel"])
         self.style.configure("Card.TCheckbutton", background=t["panel"], foreground=t["fg"])
         self.style.map("Card.TCheckbutton", background=[("active", t["panel"])])
         # Hover-emphasis card styles — a row lifts onto a slightly accent-tinted
@@ -2226,6 +2335,7 @@ class InstallerApp:
         # Clear all tracking lists
         self.check_vars.clear()
         self.autostart_vars.clear()
+        self.autostart_gears.clear()
         self.skill_vars.clear()
         self.status_labels.clear()
         self.icon_labels.clear()
@@ -2656,6 +2766,160 @@ class InstallerApp:
         if custom_path:
             return custom_path, self._get_tool_icon(custom_path)
         return tool.icon, self._get_tool_icon(tool.icon)
+
+
+    def _show_autostart_conditions_dialog(self, tool_key: str):
+        """Edit when a tool may autostart — the ⚙ beside its Auto-Start box.
+
+        Shows only the conditions the tool advertises. Values are stored per
+        host in the installer's autostart.json, never in the tool's repo.
+        """
+        tool = self.tools_by_key.get(tool_key)
+        if not tool or not tool.autostart_conditions:
+            return
+
+        t = self.theme
+        bg, fg, accent, muted = t["bg"], t["fg"], t["accent"], t["muted"]
+        input_bg = t.get("canvas_bg", bg)
+
+        saved = get_autostart_conditions(tool)
+
+        dialog = tk.Toplevel(self.root)
+        dialog.title(f"Auto-Start conditions — {tool.name}")
+        dialog.configure(background=bg)
+        dialog.transient(self.root)
+        dialog.resizable(False, False)
+
+        body = tk.Frame(dialog, bg=bg, padx=18, pady=16)
+        body.pack(fill=tk.BOTH, expand=True)
+
+        tk.Label(body, text=tool.name, bg=bg, fg=fg,
+                 font=("", 12, "bold")).pack(anchor="w")
+        tk.Label(body, text="Start at login only when all ticked conditions hold.",
+                 bg=bg, fg=muted, font=("", 9)).pack(anchor="w", pady=(0, 12))
+
+        # --- time_window -------------------------------------------------
+        window_enabled = tk.BooleanVar(value="time_window" in saved)
+        from_var = tk.StringVar(value=saved.get("time_window", {}).get("from", "06:00"))
+        to_var = tk.StringVar(value=saved.get("time_window", {}).get("to", "12:00"))
+
+        if "time_window" in tool.autostart_conditions:
+            box = tk.Frame(body, bg=bg)
+            box.pack(fill="x", anchor="w", pady=(0, 10))
+            tk.Checkbutton(box, text="Only within a time window", variable=window_enabled,
+                           bg=bg, fg=fg, selectcolor=input_bg, activebackground=bg,
+                           activeforeground=fg, highlightthickness=0,
+                           font=("", 10)).pack(anchor="w")
+            row = tk.Frame(box, bg=bg)
+            row.pack(anchor="w", padx=(24, 0), pady=(2, 0))
+            tk.Label(row, text="from", bg=bg, fg=muted).pack(side="left")
+            tk.Entry(row, textvariable=from_var, width=7, bg=input_bg, fg=fg,
+                     insertbackground=fg, justify="center").pack(side="left", padx=4)
+            tk.Label(row, text="to", bg=bg, fg=muted).pack(side="left")
+            tk.Entry(row, textvariable=to_var, width=7, bg=input_bg, fg=fg,
+                     insertbackground=fg, justify="center").pack(side="left", padx=4)
+            tk.Label(row, text="(24h, e.g. 06:00)", bg=bg, fg=muted,
+                     font=("", 8)).pack(side="left", padx=(6, 0))
+
+        # --- network -----------------------------------------------------
+        net_enabled = tk.BooleanVar(value="network" in saved)
+        ssid_var = tk.StringVar(
+            value=", ".join(saved.get("network", {}).get("ssids", [])))
+        grace_var = tk.StringVar(
+            value=str(saved.get("network", {}).get("grace_seconds", 120)))
+
+        if "network" in tool.autostart_conditions:
+            box = tk.Frame(body, bg=bg)
+            box.pack(fill="x", anchor="w", pady=(0, 10))
+            tk.Checkbutton(box, text="Only on these Wi-Fi networks", variable=net_enabled,
+                           bg=bg, fg=fg, selectcolor=input_bg, activebackground=bg,
+                           activeforeground=fg, highlightthickness=0,
+                           font=("", 10)).pack(anchor="w")
+            row = tk.Frame(box, bg=bg)
+            row.pack(anchor="w", fill="x", padx=(24, 0), pady=(2, 0))
+            tk.Entry(row, textvariable=ssid_var, width=34, bg=input_bg, fg=fg,
+                     insertbackground=fg).pack(side="left")
+            tk.Label(row, text="SSIDs, comma-separated", bg=bg, fg=muted,
+                     font=("", 8)).pack(side="left", padx=(6, 0))
+
+            row2 = tk.Frame(box, bg=bg)
+            row2.pack(anchor="w", padx=(24, 0), pady=(4, 0))
+            tk.Label(row2, text="wait up to", bg=bg, fg=muted).pack(side="left")
+            tk.Entry(row2, textvariable=grace_var, width=5, bg=input_bg, fg=fg,
+                     insertbackground=fg, justify="center").pack(side="left", padx=4)
+            tk.Label(row2, text="s after login for the network to connect",
+                     bg=bg, fg=muted).pack(side="left")
+
+            current = current_ssids()
+            if current:
+                hint = tk.Label(box, text=f"connected now: {', '.join(current)}",
+                                bg=bg, fg=accent, font=("", 8), cursor="hand2")
+                hint.pack(anchor="w", padx=(24, 0), pady=(3, 0))
+                hint.bind("<Button-1>",
+                          lambda _e: ssid_var.set(", ".join(current)))
+
+        status = tk.Label(body, text="", bg=bg, fg=muted, font=("", 9))
+        status.pack(anchor="w", pady=(4, 0))
+
+        def collect() -> Optional[dict]:
+            """Build the conditions dict, or None when the input is invalid."""
+            out = {}
+            if "time_window" in tool.autostart_conditions and window_enabled.get():
+                start, end = from_var.get().strip(), to_var.get().strip()
+                if _parse_hhmm(start) is None or _parse_hhmm(end) is None:
+                    status.config(text="Times must look like 06:00.", fg="#e06c75")
+                    return None
+                out["time_window"] = {"from": start, "to": end}
+            if "network" in tool.autostart_conditions and net_enabled.get():
+                ssids = [s.strip() for s in ssid_var.get().split(",") if s.strip()]
+                if not ssids:
+                    status.config(text="Name at least one SSID.", fg="#e06c75")
+                    return None
+                try:
+                    grace = max(0, int(float(grace_var.get().strip() or 0)))
+                except ValueError:
+                    status.config(text="The wait must be a number of seconds.",
+                                  fg="#e06c75")
+                    return None
+                out["network"] = {"ssids": ssids, "grace_seconds": grace}
+            return out
+
+        def on_save():
+            conditions = collect()
+            if conditions is None:
+                return
+            set_autostart_conditions(tool, conditions)
+            self._refresh_autostart_gear(tool_key)
+            dialog.destroy()
+
+        buttons = tk.Frame(body, bg=bg)
+        buttons.pack(fill="x", pady=(14, 0))
+        tk.Button(buttons, text="Save", command=on_save, bg=accent, fg=bg,
+                  relief="flat", padx=16, pady=4,
+                  activebackground=accent).pack(side="right")
+        tk.Button(buttons, text="Cancel", command=dialog.destroy, bg=input_bg,
+                  fg=fg, relief="flat", padx=12, pady=4,
+                  activebackground=input_bg).pack(side="right", padx=(0, 8))
+
+        dialog.update_idletasks()
+        # Centre on the main window rather than the screen, so it lands where
+        # the user is looking on a multi-monitor desktop.
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dialog.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dialog.winfo_height()) // 3
+        dialog.geometry(f"+{max(0, x)}+{max(0, y)}")
+        dialog.grab_set()
+
+    def _refresh_autostart_gear(self, tool_key: str) -> None:
+        """Recolor a row's ⚙ so a configured tool reads as configured."""
+        gear = self.autostart_gears.get(tool_key)
+        tool = self.tools_by_key.get(tool_key)
+        if gear is None or tool is None:
+            return
+        style = "CardAccent.TLabel" if get_autostart_conditions(tool) else "CardMuted.TLabel"
+        try:
+            gear.configure(style=style)
+        except tk.TclError:
+            pass
 
     def _show_icon_dialog(self, tool_key: str):
         """Show dialog to customize a tool's icon."""
@@ -4176,8 +4440,22 @@ class InstallerApp:
             autostart_var = tk.BooleanVar(value=autostart_default)
             self.autostart_vars[key] = autostart_var
             autostart_var.trace_add("write", self._on_checkbox_changed)
-            autostart_cb = ttk.Checkbutton(autostart_frame, variable=autostart_var, style="Card.TCheckbutton")
-            autostart_cb.pack(expand=True)
+            # A tool with conditions gets the checkbox and a ⚙ side by side;
+            # without them the checkbox stays centred as before.
+            if tool.autostart_conditions:
+                holder = ttk.Frame(autostart_frame, style="Card.TFrame")
+                holder.pack(expand=True)
+                autostart_cb = ttk.Checkbutton(holder, variable=autostart_var, style="Card.TCheckbutton")
+                autostart_cb.pack(side="left")
+                gear = ttk.Label(holder, text="\u2699", cursor="hand2", style="CardMuted.TLabel")
+                gear.pack(side="left", padx=(2, 0))
+                gear.bind("<Button-1>",
+                          lambda _e, k=key: self._show_autostart_conditions_dialog(k))
+                self.autostart_gears[key] = gear
+                self._refresh_autostart_gear(key)
+            else:
+                autostart_cb = ttk.Checkbutton(autostart_frame, variable=autostart_var, style="Card.TCheckbutton")
+                autostart_cb.pack(expand=True)
 
         # Name row with tag badges
         name_row = ttk.Frame(info_frame, style="Card.TFrame")
@@ -4311,8 +4589,22 @@ class InstallerApp:
             autostart_var = tk.BooleanVar(value=autostart_default)
             self.autostart_vars[key] = autostart_var
             autostart_var.trace_add("write", self._on_checkbox_changed)
-            autostart_cb = ttk.Checkbutton(autostart_frame, variable=autostart_var, style="Card.TCheckbutton")
-            autostart_cb.pack(expand=True)
+            # A tool with conditions gets the checkbox and a ⚙ side by side;
+            # without them the checkbox stays centred as before.
+            if tool.autostart_conditions:
+                holder = ttk.Frame(autostart_frame, style="Card.TFrame")
+                holder.pack(expand=True)
+                autostart_cb = ttk.Checkbutton(holder, variable=autostart_var, style="Card.TCheckbutton")
+                autostart_cb.pack(side="left")
+                gear = ttk.Label(holder, text="\u2699", cursor="hand2", style="CardMuted.TLabel")
+                gear.pack(side="left", padx=(2, 0))
+                gear.bind("<Button-1>",
+                          lambda _e, k=key: self._show_autostart_conditions_dialog(k))
+                self.autostart_gears[key] = gear
+                self._refresh_autostart_gear(key)
+            else:
+                autostart_cb = ttk.Checkbutton(autostart_frame, variable=autostart_var, style="Card.TCheckbutton")
+                autostart_cb.pack(expand=True)
 
         name_row = ttk.Frame(info_frame, style="Card.TFrame")
         name_row.pack(anchor="w", fill="x")

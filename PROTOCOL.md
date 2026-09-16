@@ -48,6 +48,7 @@ Each dict in the list describes one installable variant of the tool.
 | `default_autostart` | bool | no | `False` | Pre-tick the parent's Auto-Start checkbox for this tool. A suggested default only — the user still owns the toggle. See "Autostart" below. |
 | `cron_schedule` | str | no | — | Schedule for a non-`Icon` tool's autostart (e.g. `"@reboot"`). Without it, a tool with no `Icon` tag has no autostart mechanism at all. |
 | `cron_args` | list[str] | no | `[]` | Args for the cron invocation, when they differ from `args`. |
+| `autostart_conditions` | list[str] | no | `[]` | Condition kinds this tool's autostart supports: `"time_window"`, `"network"`. Declares only the kinds — the values are the user's and live in the installer's config. See "Conditional autostart" below. |
 
 All of these are fields of `ToolMetadata`, and `advertise()` emits each optional
 one only when it is set. A record that never touched them is byte-identical to
@@ -127,7 +128,8 @@ Three things to know before building anything around this:
 - **The `Icon` entry is a symlink under the same filename**, not a second file,
   and it runs the icon's `Exec` verbatim — entry point plus `args`, nothing else.
   If login should do something other than your normal launch, that has to be the
-  icon's own behaviour (an argument-less menu, say), not a separate entry.
+  icon's own behaviour (an argument-less menu, say), not a separate entry. The
+  one exception is a tool with conditions configured — see below.
 - **Never hand-write a `.desktop` into `~/.config/autostart`.** It is a parallel
   mechanism the parent cannot see, toggle or clean up, so it outlives removal of
   the tool and can double up with the real entry.
@@ -138,6 +140,56 @@ Three things to know before building anything around this:
 An autostart entry starts your tool with no terminal and nobody watching, so
 prefer a launch that is safe unattended and easy to interrupt over one that
 immediately seizes a session.
+
+### Conditional autostart
+
+Some tools should start at login only sometimes — a study launcher during study
+hours, a voice assistant on the home network and nowhere else. A tool says which
+kinds of condition its autostart supports, and nothing more:
+
+```python
+advertise(ToolMetadata(
+    name="Jarvis",
+    desktop_file="jarvis.desktop",
+    icon="audio-input-microphone",
+    desc="Voice assistant",
+    autostart_conditions=["network"],    # or ["time_window"], or both
+))
+```
+
+| Condition | Asks | Stored as |
+|---|---|---|
+| `time_window` | is the clock inside a window? | `{"from": "06:00", "to": "12:00"}` |
+| `network` | is one of these Wi-Fi networks active? | `{"ssids": [...], "grace_seconds": 120}` |
+
+Declaring a condition adds a ⚙ beside that tool's Auto-Start checkbox. The
+**values** are the user's: they are entered there and saved per host in the
+installer's own config (`~/.config/<slug>/autostart.json`), never in the tool.
+A tool that hardcodes someone's working hours or network names has put personal
+configuration into a shared — often public — repository.
+
+The values are the user's in a second sense too: a tool declaring a condition
+gets no say in whether it applies. An unconfigured condition is simply not
+enforced, so a tool must still behave correctly when started at any time, on any
+network. Treat the condition as the user's convenience, not as a guarantee your
+code may rely on.
+
+Once conditions are configured, the parent writes the autostart entry as a real
+file instead of the usual symlink, with the tool's own `Exec` wrapped in
+
+```
+cli-tools-kit-autostart-gate --slug <installer> --tool <desktop stem> -- <the tool's Exec>
+```
+
+The gate evaluates the conditions, execs the real command when they pass, and
+exits 0 silently when they do not. The installed `.desktop` in the applications
+directory is left alone, so launching from the menu is never gated. `time_window`
+is checked once at launch; `network` polls for up to `grace_seconds`, since at
+login the wireless link is usually still associating. Neither watches for later
+changes — leaving the network does not stop a tool that already started.
+
+Older parents ignore `autostart_conditions` and install the plain symlink, so a
+tool that declares one still works against them; it just starts unconditionally.
 
 ## Minimal example
 

@@ -72,6 +72,11 @@ def advertise(metadata: Union[ToolMetadata, List[ToolMetadata]]) -> NoReturn:
             value = getattr(m, key, None)
             if value:
                 record[key] = value
+        # Conditions are a list, so they get the same emit-only-when-set
+        # treatment but keep their type.
+        conditions = getattr(m, "autostart_conditions", None)
+        if conditions:
+            record["autostart_conditions"] = list(conditions)
         out.append(record)
     print(json.dumps(out))
     sys.exit(0)
