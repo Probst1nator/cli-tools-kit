@@ -40,6 +40,21 @@ are resolved too, one nested level deep and no further. Paths in a nested file
 are relative to that file, clones still go under the same root, a path already
 resolved is not visited twice, and duplicates are dropped.
 
+An entry may name a GitHub organisation instead of one repo. The installer
+lists the org's repos, keeps the ones carrying a topic, and turns each into an
+ordinary source, so everything after that step is unchanged:
+
+    [[source]]
+    org     = "AutomatedAlchemy"
+    topic   = "cli-tool-kit"                  # the default when omitted
+    exclude = ["alchemy-installer"]           # repo names to skip
+    include = ["manim-kit"]                   # allowlist; wins over exclude
+
+``org`` is mutually exclusive with ``url`` and ``path``. The listing is cached
+for a day, a network error falls back to the cached list and then to the
+directories already under the root, and an explicit ``[[source]]`` with the
+same ``name`` always wins over an org-derived one.
+
 The whole feature is three calls:
 
     sources = load_sources("installer.toml")
@@ -54,15 +69,22 @@ or, for a wrapper that just wants the installer:
 
 from __future__ import annotations
 
+import json
 import os
+import re
+import shutil
 import subprocess
 import sys
+import time
+import urllib.error
+import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional, Sequence
+from typing import Callable, List, Optional, Sequence, Tuple
 
-__all__ = ["Source", "load_sources", "resolve_sources", "run_installer",
-           "local_root", "save_local_root", "default_root"]
+__all__ = ["Source", "OrgSource", "load_sources", "expand_org_sources",
+           "resolve_sources", "run_installer", "local_root", "save_local_root",
+           "default_root"]
 
 # How far below the top-level installer.toml a nested one is still read.
 MAX_NESTING = 1
@@ -85,6 +107,44 @@ class Source:
     name: str
     url: Optional[str] = None
     path: Optional[str] = None
+
+
+# The default GitHub topic an org's repos are tagged with to be offered.
+DEFAULT_ORG_TOPIC = "cli-tool-kit"
+
+# A GitHub org or user name, and a topic: both are pasted into a URL path, so
+# they stay to the characters GitHub itself allows. \Z, not $, so a trailing
+# newline cannot smuggle a second path segment in.
+_ORG_RE = re.compile(r"^[A-Za-z0-9-]{1,39}\Z")
+_TOPIC_RE = re.compile(r"^[A-Za-z0-9-]{1,50}\Z")
+
+# The one host this module talks to, hard-coded so a config file cannot point
+# the listing at somewhere else.
+GITHUB_API = "https://api.github.com"
+
+# How long a cached listing is used without asking GitHub again.
+ORG_CACHE_TTL = 24 * 60 * 60
+
+# Enough for 500 repos; a listing longer than that is a config mistake.
+ORG_MAX_PAGES = 5
+
+ORG_TIMEOUT = 10
+GH_TOKEN_TIMEOUT = 5
+
+
+@dataclass(frozen=True)
+class OrgSource:
+    """One GitHub organisation whose topic-tagged repos become sources.
+
+    Expanded into ordinary :class:`Source` entries by
+    :func:`expand_org_sources`, which is the only place in this module that
+    reaches the network.
+    """
+
+    org: str
+    topic: str = DEFAULT_ORG_TOPIC
+    include: Tuple[str, ...] = ()
+    exclude: Tuple[str, ...] = ()
 
 
 # --- TOML -------------------------------------------------------------------
@@ -175,12 +235,49 @@ def save_local_root(config_path, root, local_path=None, log: Callable = print) -
     return True
 
 
-def load_sources(config_path, local_path=None, log: Callable = print) -> List[Source]:
+def _names(entry: dict, key: str) -> Tuple[str, ...]:
+    """One of the ``include`` / ``exclude`` lists, as a tuple of strings."""
+    raw = entry.get(key)
+    if not isinstance(raw, list):
+        return ()
+    return tuple(item for item in raw if isinstance(item, str) and item)
+
+
+def _org_source(entry: dict, config_name: str, log: Callable) -> Optional[OrgSource]:
+    """One ``[[source]]`` table with an ``org``, or None when it is unusable.
+
+    Reported and dropped the same way an https-only violation is: one line
+    naming what is wrong, and the other sources still install.
+    """
+    org = entry.get("org")
+    if not isinstance(org, str) or not _ORG_RE.match(org):
+        log(f"{config_name}: a [[source]] with an unusable org "
+            f"({org!r}), skipped")
+        return None
+    if entry.get("url") or entry.get("path"):
+        log(f"{org}: a [[source]] cannot have both org and url/path, skipped")
+        return None
+    topic = entry.get("topic", DEFAULT_ORG_TOPIC)
+    if not isinstance(topic, str) or not _TOPIC_RE.match(topic):
+        log(f"{org}: {topic!r} is not a usable topic, skipped")
+        return None
+    return OrgSource(org=org, topic=topic,
+                     include=_names(entry, "include"),
+                     exclude=_names(entry, "exclude"))
+
+
+def load_sources(config_path, local_path=None, log: Callable = print) -> List:
     """The ``[[source]]`` entries of one TOML file, local overrides applied.
 
     ``local_path`` defaults to ``installer.local.toml`` next to ``config_path``.
     A ``path`` is taken relative to the file it is written in. An entry without
     a name is reported and dropped.
+
+    An entry that carries an ``org`` instead of a ``name`` becomes an
+    :class:`OrgSource` in the returned list. :func:`expand_org_sources` turns
+    those into ordinary :class:`Source` entries; :func:`resolve_sources` ignores
+    any that are left, so a caller that does not expand simply gets no tools
+    from the org rather than an error.
     """
     config_path = Path(config_path)
     local_path = Path(local_path) if local_path is not None else _local_path_for(config_path)
@@ -191,13 +288,21 @@ def load_sources(config_path, local_path=None, log: Callable = print) -> List[So
                  for entry in local.get("source") or []
                  if isinstance(entry, dict) and entry.get("name")}
 
-    sources: List[Source] = []
+    sources: List = []
     for entry in data.get("source") or []:
         if not isinstance(entry, dict):
             continue
         name = entry.get("name")
         if not name:
+            if "org" in entry:
+                org_source = _org_source(entry, config_path.name, log)
+                if org_source is not None:
+                    sources.append(org_source)
+                continue
             log(f"{config_path.name}: a [[source]] without a name, skipped")
+            continue
+        if entry.get("org"):
+            log(f"{name}: a [[source]] cannot have both org and url/path, skipped")
             continue
         override = overrides.get(name, {}).get("path")
         raw = override or entry.get("path")
@@ -205,6 +310,244 @@ def load_sources(config_path, local_path=None, log: Callable = print) -> List[So
         path = _absolute(base, raw) if raw else None
         sources.append(Source(name=name, url=entry.get("url"), path=path))
     return sources
+
+
+# --- GitHub org listings ----------------------------------------------------
+
+def _gh_token() -> Optional[str]:
+    """The token ``gh auth token`` prints, or None.
+
+    Opportunistic: with the GitHub CLI logged in, the listing also sees the
+    org's private repos. Without it the public listing is used. The token is
+    never logged.
+    """
+    if not shutil.which("gh"):
+        return None
+    try:
+        result = subprocess.run(["gh", "auth", "token"], capture_output=True,
+                                text=True, timeout=GH_TOKEN_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    token = result.stdout.strip()
+    return token or None
+
+
+def _api_version() -> str:
+    from . import __version__  # noqa: PLC0415 — avoids an import cycle at module load
+    return __version__
+
+
+def _fetch_org_repos(org: str, token: Optional[str]) -> List[dict]:
+    """Every repo of one org, over as many pages as GitHub needs.
+
+    Raises ``OSError`` (which ``urllib`` errors are) on anything that goes
+    wrong, so the one caller can fall back in a single place.
+    """
+    headers = {"Accept": "application/vnd.github+json",
+               "User-Agent": f"cli-tools-kit/{_api_version()}"}
+    if token:
+        headers["Authorization"] = f"Bearer {token}"
+    repos: List[dict] = []
+    for page in range(1, ORG_MAX_PAGES + 1):
+        query = f"per_page=100&page={page}"
+        if not token:
+            # Without a token only public repos are visible anyway; asking for
+            # them explicitly keeps the response small.
+            query += "&type=public"
+        request = urllib.request.Request(  # noqa: S310 — the host is hard-coded above
+            f"{GITHUB_API}/orgs/{org}/repos?{query}", headers=headers)
+        with urllib.request.urlopen(request, timeout=ORG_TIMEOUT) as response:
+            batch = json.loads(response.read().decode("utf-8"))
+        if not isinstance(batch, list):
+            raise OSError("the listing was not a JSON array")
+        repos.extend(item for item in batch if isinstance(item, dict))
+        if len(batch) < 100:
+            break
+    return repos
+
+
+def _keep_fields(repos: Sequence[dict]) -> List[dict]:
+    """Only the fields this module uses, so the cache stays small and readable."""
+    keep = ("name", "clone_url", "topics", "archived", "default_branch",
+            "description")
+    return [{field_name: repo.get(field_name) for field_name in keep}
+            for repo in repos if repo.get("name")]
+
+
+def _cache_file(cache_dir, org: str) -> Path:
+    return Path(os.path.expanduser(str(cache_dir))) / f"org-{org}.json"
+
+
+def _read_org_cache(cache_dir, org: str) -> Optional[dict]:
+    """The cached listing for one org, or None when there is none to read."""
+    try:
+        with open(_cache_file(cache_dir, org), encoding="utf-8") as fh:
+            cached = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    if not isinstance(cached, dict) or not isinstance(cached.get("repos"), list):
+        return None
+    return cached
+
+
+def _write_org_cache(cache_dir, org: str, topic: str, repos: Sequence[dict],
+                     log: Callable) -> None:
+    path = _cache_file(cache_dir, org)
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"fetched_at": time.time(), "topic": topic,
+                                    "repos": list(repos)}, indent=1),
+                        encoding="utf-8")
+    except OSError as exc:
+        log(f"{org}: the listing was not cached ({exc})")
+
+
+def _age(seconds: float) -> str:
+    """"2h ago", "3 days ago" — how long ago a listing was fetched."""
+    delta = max(0.0, time.time() - seconds)
+    if delta < 90 * 60:
+        return f"{int(delta // 60)}min ago"
+    if delta < 36 * 3600:
+        return f"{int(delta // 3600)}h ago"
+    return f"{int(delta // 86400)} days ago"
+
+
+def _selected(entry: OrgSource, repos: Sequence[dict]) -> List[dict]:
+    """The repos of one listing this entry offers.
+
+    ``include`` is an allowlist and wins over ``exclude``; the topic is still
+    required either way, so a repo that lost its tag stops being offered
+    without anyone having to edit the config.
+    """
+    chosen = []
+    for repo in repos:
+        name = repo.get("name")
+        if not name or repo.get("archived"):
+            continue
+        topics = repo.get("topics") or []
+        if entry.topic not in topics:
+            continue
+        if entry.include:
+            if name not in entry.include:
+                continue
+        elif name in entry.exclude:
+            continue
+        chosen.append(repo)
+    return chosen
+
+
+def _from_root(entry: OrgSource, root, log: Callable) -> List[Source]:
+    """The last fallback: the org's checkouts that are already under the root.
+
+    No listing and no cache, so what is on disk is all this run knows about.
+    A path-only source, because without a listing there is no clone URL.
+    """
+    base = Path(os.path.expanduser(str(root)))
+    found = []
+    try:
+        entries = sorted(item for item in base.iterdir() if item.is_dir())
+    except OSError:
+        entries = []
+    for item in entries:
+        if entry.include:
+            if item.name not in entry.include:
+                continue
+        elif item.name in entry.exclude:
+            continue
+        found.append(Source(name=item.name, path=str(item.resolve())))
+    log(f"{entry.org}: no listing and no cache, using the "
+        f"{len(found)} checkout(s) already under {base}")
+    return found
+
+
+def _org_listing(entry: OrgSource, *, refresh: bool, clone: bool, cache_dir,
+                 log: Callable) -> Optional[Tuple[List[dict], str]]:
+    """One org's repo list plus the line describing where it came from.
+
+    None when neither the network nor the cache produced one. ``clone=False``
+    is the network-free path, so it never fetches.
+    """
+    cached = _read_org_cache(cache_dir, entry.org)
+    fetched_at = cached.get("fetched_at") if cached else None
+    fresh_enough = (isinstance(fetched_at, (int, float))
+                    and time.time() - fetched_at < ORG_CACHE_TTL)
+
+    if not clone:
+        if cached is None:
+            return None
+        return cached["repos"], f"cached listing from {_age(fetched_at or 0)}"
+    if cached is not None and fresh_enough and not refresh:
+        return cached["repos"], f"listed {_age(fetched_at)}"
+
+    try:
+        repos = _keep_fields(_fetch_org_repos(entry.org, _gh_token()))
+    except (OSError, ValueError, urllib.error.HTTPError) as exc:
+        reason = getattr(exc, "reason", None) or exc
+        if cached is None:
+            return None
+        log(f"{entry.org}: not listed, using the cached listing from "
+            f"{_age(fetched_at or 0)} ({reason})")
+        return cached["repos"], f"cached listing from {_age(fetched_at or 0)}"
+
+    if cached is not None:
+        before = {repo.get("name") for repo in _selected(entry, cached["repos"])}
+        gone = sorted(before - {repo.get("name") for repo in _selected(entry, repos)})
+        if gone:
+            log(f"{entry.org}: {len(gone)} repos dropped since the last "
+                f"listing: {', '.join(gone)}")
+    _write_org_cache(cache_dir, entry.org, entry.topic, repos, log)
+    return repos, "listed just now"
+
+
+def expand_org_sources(sources: Sequence, *, refresh: bool = False, cache_dir,
+                       root=None, clone: bool = True,
+                       log: Callable = print) -> List[Source]:
+    """Replace every :class:`OrgSource` with the repos it stands for.
+
+    Each kept repo becomes an ordinary ``Source(name=<repo>, url=<clone_url>)``,
+    so resolution, cloning, nesting, discovery and the ``--advertise`` probe all
+    work on it unchanged. A repo that carries the topic but turns out to hold no
+    tool clones, advertises nothing, and is dropped by the walker as any other
+    directory is.
+
+    An explicit ``[[source]]`` with the same ``name`` wins, so one repo can be
+    pinned to a fork or a local checkout while the rest of the org follows the
+    listing.
+
+    ``clone=False`` is the network-free path the login check takes: it uses the
+    cache, then the directories already under ``root``, and never fetches.
+    """
+    explicit = {source.name for source in sources if isinstance(source, Source)}
+    expanded: List[Source] = []
+    for source in sources:
+        if isinstance(source, Source):
+            expanded.append(source)
+            continue
+        if not isinstance(source, OrgSource):
+            continue
+        listing = _org_listing(source, refresh=refresh, clone=clone,
+                               cache_dir=cache_dir, log=log)
+        if listing is None:
+            derived = _from_root(source, root, log) if root is not None else []
+        else:
+            repos, provenance = listing
+            kept = _selected(source, repos)
+            log(f"{source.org}: {len(kept)} repos tagged {source.topic} "
+                f"({provenance})")
+            derived = [Source(name=repo["name"], url=repo.get("clone_url"))
+                       for repo in kept]
+        for candidate in derived:
+            if candidate.name in explicit:
+                continue
+            url = candidate.url
+            if url is not None and not str(url).lower().startswith("https://"):
+                log(f"{candidate.name}: {url} is not an https:// URL, skipped")
+                continue
+            explicit.add(candidate.name)
+            expanded.append(candidate)
+    return expanded
 
 
 # --- resolution -------------------------------------------------------------
@@ -273,6 +616,10 @@ def _resolve_level(sources: Sequence[Source], root: Path, refresh: bool, log: Ca
                    clone: bool, config_name: str, depth: int,
                    found: List[Path], seen: set) -> None:
     for source in sources:
+        if not isinstance(source, Source):
+            # An OrgSource nobody expanded. Ignored rather than fatal, so a
+            # caller that skipped expand_org_sources still installs the rest.
+            continue
         path = _resolve_one(source, root, refresh, log, clone)
         if path is None or path in seen:
             continue
@@ -466,6 +813,12 @@ def run_installer(config_path, argv=None, default_root_name: str = "tools", **ru
     pre-discovery hook, which the engine skips on the ``--check`` path, so that
     check stays network-free and sees whatever is already on disk.
 
+    An ``org`` entry in the sources file is expanded into one source per
+    topic-tagged repo before resolution, using the identity's cache directory
+    for the listing. That expansion is the only network call this module makes
+    besides git, it happens only when such an entry exists, and on the
+    ``--check`` path it reads the cache instead of GitHub.
+
     ``default_root_name`` is the folder name the suggestion ends in, so an
     organisation's installer can suggest ``<cwd>/WW3-tools`` rather than
     ``<cwd>/tools``.
@@ -490,15 +843,24 @@ def run_installer(config_path, argv=None, default_root_name: str = "tools", **ru
     except OSError as exc:
         print(f"{root}: not created ({exc})")
     sources = load_sources(config_path)
+    from .identity import LEGACY_IDENTITY  # noqa: PLC0415 — keeps the import graph flat
+    identity = run_kwargs.get("identity") or LEGACY_IDENTITY
+    cache_dir = identity.cache_path
 
     # The engine reads DISCOVERY_ROOTS after the hook has run, so the hook fills
     # this list in place with what it resolved. It is pre-filled with what is on
-    # disk already, for the --check path that never calls the hook.
-    roots = [str(p) for p in resolve_sources(sources, root, clone=False,
-                                             log=lambda *_: None)]
+    # disk already, for the --check path that never calls the hook — which is
+    # why the expansion here is the network-free one.
+    quiet = lambda *_: None  # noqa: E731
+    roots = [str(p) for p in resolve_sources(
+        expand_org_sources(sources, cache_dir=cache_dir, root=root, clone=False,
+                           log=quiet),
+        root, clone=False, log=quiet)]
 
     def pre_discovery(refresh):
-        roots[:] = [str(p) for p in resolve_sources(sources, root, refresh=refresh)]
+        expanded = expand_org_sources(sources, refresh=refresh, cache_dir=cache_dir,
+                                      root=root)
+        roots[:] = [str(p) for p in resolve_sources(expanded, root, refresh=refresh)]
 
     from . import gui_installer  # noqa: PLC0415 — imports tkinter, keep it lazy
     run_kwargs.setdefault("root_dir", root)
