@@ -334,9 +334,21 @@ url = "https://github.com/acme/lab-tools"
 
 | Key | Required | Meaning |
 |---|---|---|
-| `name` | yes | The source's identity. Slashes make directory levels, so `acme/lab` clones to `<root>/acme/lab`. A table without a name is reported and dropped. |
+| `name` | yes, unless `org` | The source's identity. Slashes make directory levels, so `acme/lab` clones to `<root>/acme/lab`. A table with neither a name nor an org is reported and dropped. |
 | `path` | no | A checkout to use as it is, relative to the file it is written in. `~` is expanded. |
 | `url` | no | Where to clone from when no path is on disk. Must be `https://`; anything else is reported and dropped. |
+| `org` | no | A GitHub organisation whose topic-tagged repos each become a source named after the repo. Mutually exclusive with `name`, `url` and `path`. |
+| `topic` | no | The topic a repo of that org needs to be offered. `cli-tool-kit` when omitted. |
+| `exclude` | no | Repo names of that org to skip. |
+| `include` | no | Repo names of that org to offer, an allowlist. Overrides `exclude`; `topic` is still required. |
+
+An `org` entry is expanded before resolution: the org's repos are listed once,
+the tagged and non-archived ones become ordinary sources, and the four steps
+below then apply to each unchanged. An explicit `[[source]]` whose `name`
+matches a listed repo wins over the listing. The listing is cached for a day,
+`--refresh` fetches again, a failure falls back to the cache and then to the
+directories under the root, and `--check` never fetches. README § Sources has
+the details.
 
 A top-level `root` is **not** written in this file. It is a per-machine fact and
 belongs in `installer.local.toml`.

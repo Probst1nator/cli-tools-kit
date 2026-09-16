@@ -350,6 +350,35 @@ name = "manim-kit"
 url = "https://github.com/AutomatedAlchemy/manim-kit"
 ```
 
+An entry may name a GitHub organisation instead of one repo. The installer lists
+the org's repos, keeps the ones carrying a topic, and turns each into an ordinary
+source, so a new tool in the org appears without anyone editing this file:
+
+```toml
+[[source]]
+org     = "AutomatedAlchemy"
+topic   = "cli-tool-kit"                  # the default when omitted
+exclude = ["alchemy-installer"]           # repo names to skip
+include = ["manim-kit"]                   # allowlist; wins over exclude
+```
+
+The topic decides what is cloned, and the walker plus the `--advertise` probe
+decide what is a tool: a repo that carries the topic but holds no tool clones,
+advertises nothing and is dropped like any other directory. `org` cannot be
+combined with `url` or `path`, and an explicit `[[source]]` with the same `name`
+as a listed repo wins, so one tool can be pinned to a fork or a local checkout
+while the rest of the org follows the listing. Archived repos are left out.
+`include` is an allowlist and overrides `exclude`; the topic is required either
+way.
+
+The listing is one `GET` to `api.github.com`, cached for a day under the
+identity's cache directory, and `--refresh` fetches again. With the GitHub CLI
+logged in, its token is used and the org's private repos are listed too; without
+it the public listing is used and nothing is required. When the listing fails the
+cached one is used however old it is, and with no cache at all the directories
+already under the root are used — both say so in one line. `--check` never
+fetches: it reads the cache, or the root.
+
 `installer.local.toml` next to it is optional and belongs to one machine, so keep
 it out of git. It sets the root and replaces a `path` for a source matched by
 `name`:
@@ -388,6 +417,9 @@ colleague without access to a private repo still gets everybody else's tools.
 `--refresh` brings the clones up to date with `git pull --ff-only`; a checkout
 given by `path` is never pulled. Cloning happens in the engine's `pre_discovery`
 hook, which `--check` skips, so the login check stays network-free.
+
+An `org` entry is the only thing in this module that reaches anything but git,
+it is opt-in per entry, and nothing is fetched when no such entry exists.
 
 A repo that is itself an installer tree can carry its own `installer.toml`. Its
 `[[source]]` entries are resolved too, one nested level deep and no further, with
