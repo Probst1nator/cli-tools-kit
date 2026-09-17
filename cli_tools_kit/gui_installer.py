@@ -847,10 +847,11 @@ AUTOSTART_DIR = (host.startup_dir() if host.IS_WINDOWS
                  else os.path.join(os.path.expanduser("~"), ".config", "autostart"))
 
 # --- Login update-check autostart -----------------------------------------
-# A ~/.config/autostart entry that runs `installer.py --check` once per login.
+# A startup entry (~/.config/autostart, or the Start Menu's Startup folder on
+# Windows) that runs `installer.py --check` once per login.
 # The check APPLIES network-free reconciliations (drifted .desktop Exec paths,
-# renamed aliases, stale installed SKILL.md — all rewritten from already-synced
-# source via skip_deps, no pip) and only NOTIFIES for updates that would touch
+# renamed aliases, stale installed SKILL.md — all rewritten from the source
+# already on disk via skip_deps, no pip) and only NOTIFIES for updates that would touch
 # the network (a new, not-yet-installed tool) or that add a new skill. The
 # pip/network gate stays behind an explicit human action.
 # Derived from the configurable *_NAME knobs above. run() recomputes these after
@@ -2635,11 +2636,12 @@ class InstallerApp:
         self._attach_tooltip(
             self._autostart_check_cb,
             "Check for updates on login (local, no network)\n\n"
-            "Installs a ~/.config/autostart entry that, once per login, applies "
+            "Installs a startup entry that, once per login, applies "
             "network-free reconciliations (drifted shortcuts, renamed aliases, and "
-            "stale installed skills — rewritten from your synced source, never pip) "
-            "and only notifies for updates that need the network (a new, "
+            "stale installed skills — rewritten from the tool's source on disk, "
+            "never pip) and only notifies for updates that need the network (a new, "
             "not-yet-installed tool).\n\n"
+            f"Entry: {AUTOSTART_CHECK_DESKTOP}\n"
             f"Log: {CHECK_LOG}")
 
         # "Reinstall deps" is the deliberate, network-touching pip action — kept in
@@ -6014,7 +6016,7 @@ def cli_check() -> int:
 
     Auto-applies the network-free reconciliations and notifies for the rest:
 
-      APPLY (no pip, no network — rewritten from already-synced source):
+      APPLY (no pip, no network — rewritten from the source already on disk):
         • a drifted shortcut (moved .desktop Exec path / renamed alias)  -> install_tool(skip_deps=True)
         • a currently-installed SKILL.md that has drifted                 -> idempotent --install-skill
           (only touched when the skill is already present, so a skill the
@@ -6138,7 +6140,7 @@ def main():
     parser.add_argument("--check", action="store_true",
                         help="Headless login check: auto-apply network-free reconciliations, notify for new tools")
     parser.add_argument("--enable-autostart-check", action="store_true",
-                        help="Install the login update-check autostart entry (~/.config/autostart)")
+                        help="Install the login update-check autostart entry")
     parser.add_argument("--disable-autostart-check", action="store_true",
                         help="Remove the login update-check autostart entry")
     parser.add_argument("--refresh", action="store_true",
