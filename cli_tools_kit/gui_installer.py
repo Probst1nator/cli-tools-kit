@@ -2404,8 +2404,6 @@ class InstallerApp:
         for theme_name, theme_data in self.THEMES.items():
             btn = tk.Button(
                 theme_frame,
-                text=theme_data["emoji"],
-                font=("", 14),
                 width=2,
                 relief="flat",
                 bd=0,
@@ -2415,6 +2413,7 @@ class InstallerApp:
                 cursor="hand2",
                 command=lambda tn=theme_name: self._select_theme(tn)
             )
+            self._set_emoji_face(btn, theme_data["emoji"])
             btn.pack(side="left", padx=2)
             self.theme_buttons[theme_name] = btn
 
@@ -2422,8 +2421,6 @@ class InstallerApp:
         # picked color, persisted per theme; re-clicking the emoji resets.
         accent_btn = tk.Button(
             theme_frame,
-            text="🎨",
-            font=("", 14),
             width=2,
             relief="flat",
             bd=0,
@@ -2434,6 +2431,7 @@ class InstallerApp:
             cursor="hand2",
             command=self._pick_accent,
         )
+        self._set_emoji_face(accent_btn, "🎨")
         accent_btn.pack(side="left", padx=(8, 2))
         self._attach_tooltip(accent_btn,
                              "Re-tint this theme from a base color "
@@ -2754,6 +2752,33 @@ class InstallerApp:
         self.hint_copy_btn.pack(side="left")
 
         self._update_status_labels()
+
+    def _set_emoji_face(self, button: tk.Button, emoji_char: str, size: int = 20) -> None:
+        """Put an emoji on a button as a color image, falling back to its text.
+
+        Tk draws a character with one foreground color, so an emoji set as text
+        comes out as the monochrome glyph. Rendering it through PIL keeps the
+        color, which is the whole point of the theme and accent buttons.
+        """
+        photo = None
+        try:
+            cache_file = os.path.join(
+                _get_emoji_cache_dir(), f"btn_{ord(emoji_char[0]):x}_{size}.png"
+            )
+            if not os.path.exists(cache_file):
+                render_emoji_icon(emoji_char, cache_file, size=size)
+            if os.path.exists(cache_file):
+                photo = ImageTk.PhotoImage(file=cache_file)
+        except Exception:
+            photo = None
+
+        if photo is not None:
+            # The cache keeps the only reference; without it Tk shows a blank
+            # button as soon as the image is collected.
+            self.icon_cache[f"emoji_{emoji_char}_{size}"] = photo
+            button.config(image=photo, text="", width=size + 8, height=size + 4)
+        else:
+            button.config(text=emoji_char, font=("", 14), width=2)
 
     def _get_tool_icon(self, icon_name_or_path: str) -> Optional[ImageTk.PhotoImage]:
         """Get or load a tool icon, using cache to prevent garbage collection."""
