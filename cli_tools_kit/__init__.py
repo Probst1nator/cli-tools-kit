@@ -56,4 +56,4 @@ __all__ = [
     "read_installed_skill",
 ]
 
-__version__ = "0.8.0"
+__version__ = "0.8.1"
