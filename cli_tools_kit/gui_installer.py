@@ -856,7 +856,21 @@ AUTOSTART_DIR = (host.startup_dir() if host.IS_WINDOWS
 # pip/network gate stays behind an explicit human action.
 # Derived from the configurable *_NAME knobs above. run() recomputes these after
 # a wrapper overrides the names; the defaults keep tools/installer.py unchanged.
-AUTOSTART_CHECK_DESKTOP = os.path.join(AUTOSTART_DIR, AUTOSTART_CHECK_DESKTOP_NAME)
+
+
+def _autostart_check_path() -> str:
+    """Where the login-check entry goes, named the way the platform runs it.
+
+    Windows' Startup folder executes shortcuts, not XDG .desktop files, so the
+    name carries .lnk there and the entry is written as one.
+    """
+    name = AUTOSTART_CHECK_DESKTOP_NAME
+    if host.IS_WINDOWS:
+        name = os.path.splitext(name)[0] + ".lnk"
+    return os.path.join(AUTOSTART_DIR, name)
+
+
+AUTOSTART_CHECK_DESKTOP = _autostart_check_path()
 CHECK_LOG = os.path.join(os.path.expanduser("~"), ".local", "log", CHECK_LOG_NAME)
 # Remembers the last actionable (new tool / new skill / failure) set so the
 # login check notifies once when it CHANGES instead of nagging every login.
@@ -895,7 +909,7 @@ def _recompute_check_paths() -> None:
     """Re-derive the login-check artifact paths from the *_NAME knobs (call after
     a wrapper overrides them, e.g. inside run())."""
     global AUTOSTART_CHECK_DESKTOP, CHECK_LOG, CHECK_STATE
-    AUTOSTART_CHECK_DESKTOP = os.path.join(AUTOSTART_DIR, AUTOSTART_CHECK_DESKTOP_NAME)
+    AUTOSTART_CHECK_DESKTOP = _autostart_check_path()
     CHECK_LOG = os.path.join(os.path.expanduser("~"), ".local", "log", CHECK_LOG_NAME)
     CHECK_STATE = os.path.join(os.path.expanduser("~"), ".local", "state", CHECK_STATE_NAME)
 
@@ -921,6 +935,23 @@ def autostart_check_enabled() -> bool:
 def enable_autostart_check() -> str:
     """Write the login update-check autostart entry. Returns its path."""
     os.makedirs(AUTOSTART_DIR, exist_ok=True)
+
+    if host.IS_WINDOWS:
+        # The Startup folder runs shortcuts; a .desktop file dropped there is
+        # never executed. pythonw keeps the console window from flashing up at
+        # every login, since the check reports through a notification anyway.
+        runner = sys.executable
+        windowless = os.path.join(os.path.dirname(runner), "pythonw.exe")
+        if os.path.exists(windowless):
+            runner = windowless
+        host.write_shortcut(
+            AUTOSTART_CHECK_DESKTOP,
+            target=runner,
+            args=f'"{ENTRY_SCRIPT}" --check',
+            workdir=os.path.dirname(ENTRY_SCRIPT),
+        )
+        return AUTOSTART_CHECK_DESKTOP
+
     exec_line = f"{sys.executable} {ENTRY_SCRIPT} --check"
     content = (
         "[Desktop Entry]\n"
@@ -941,10 +972,15 @@ def enable_autostart_check() -> str:
 
 def disable_autostart_check() -> bool:
     """Remove the login update-check autostart entry. True if one was present."""
-    if os.path.exists(AUTOSTART_CHECK_DESKTOP):
-        os.remove(AUTOSTART_CHECK_DESKTOP)
-        return True
-    return False
+    removed = False
+    # On Windows, also clear the .desktop an older version wrote into the
+    # Startup folder, where it sat inert instead of running the check.
+    stale = os.path.join(AUTOSTART_DIR, AUTOSTART_CHECK_DESKTOP_NAME)
+    for path in {AUTOSTART_CHECK_DESKTOP, stale}:
+        if os.path.exists(path):
+            os.remove(path)
+            removed = True
+    return removed
 
 
 def _notify_send(summary: str, body: str = "") -> None:
