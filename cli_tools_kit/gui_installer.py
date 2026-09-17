@@ -485,6 +485,14 @@ def _find_emoji_font():
         "/usr/share/fonts/google-noto-color-emoji/NotoColorEmoji.ttf",
         "/usr/share/fonts/truetype/unifont/unifont.ttf",
     ]
+    # Windows ships Segoe UI Emoji; macOS ships Apple Color Emoji. Neither has
+    # fc-match, so without these the lookup below finds nothing and every emoji
+    # falls back to the monochrome glyph.
+    windir = os.environ.get("WINDIR", r"C:\Windows")
+    font_paths += [
+        os.path.join(windir, "Fonts", "seguiemj.ttf"),
+        "/System/Library/Fonts/Apple Color Emoji.ttc",
+    ]
     for path in font_paths:
         if os.path.exists(path):
             return path
@@ -526,17 +534,18 @@ def render_emoji_icon(emoji_char: str, output_path: str, size: int = 128) -> boo
 
         if font is not None:
             try:
-                render_size = native_size + 60  # Extra room for centering
+                # Draw at a fixed offset on a canvas with room on every side,
+                # then let the crop below find the glyph. Centering by textbbox
+                # first would cut emoji off: for a character with a variation
+                # selector (U+2600 U+FE0F) Segoe UI Emoji reports a box half
+                # again as wide as what it actually paints, and the resulting
+                # offset pushes the right-hand side off the canvas.
+                render_size = native_size * 3
                 img = Image.new("RGBA", (render_size, render_size), (0, 0, 0, 0))
                 draw = ImageDraw.Draw(img)
 
-                bbox = draw.textbbox((0, 0), emoji_char, font=font)
-                w = bbox[2] - bbox[0]
-                h = bbox[3] - bbox[1]
-                x = (render_size - w) // 2 - bbox[0]
-                y = (render_size - h) // 2 - bbox[1]
-
-                draw.text((x, y), emoji_char, font=font, embedded_color=True)
+                origin = native_size // 2
+                draw.text((origin, origin), emoji_char, font=font, embedded_color=True)
 
                 if img.getbbox():
                     # Crop to content, resize to target with padding
