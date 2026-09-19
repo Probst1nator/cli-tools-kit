@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover - exercised only where python3-tk is mis
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence
 
 from . import host
+from . import venvs
 from .identity import InstallerIdentity, LEGACY_IDENTITY
 from .autostart_gate import (
     KNOWN_CONDITIONS,
@@ -1149,9 +1150,20 @@ def install_tool(tool: ToolEntry, skip_deps: bool = False) -> tuple[bool, str]:
     When skip_deps is True, sets TOOLS_INSTALLER_SKIP_DEPS=1 in the child
     environment so the shared ToolInstaller writes the .desktop/alias without
     running 'pip install'. This keeps a shortcut refresh local and network-free.
+
+    The tool runs in the venv :mod:`cli_tools_kit.venvs` resolves for its
+    checkout — shared with every other checkout of the same upstream repo, so
+    a tool offered by two installers is built once. That venv is provisioned
+    here, before --install runs, because the tool imports this package to
+    handle the flag and cannot install what it is already missing.
     """
     try:
-        cmd = [sys.executable, tool.script_path, "--install"] + tool.args
+        tool_dir = os.path.dirname(tool.script_path)
+        try:
+            python = venvs.ensure_venv(tool_dir, provision=not skip_deps)
+        except RuntimeError as exc:
+            return False, str(exc)
+        cmd = [python, tool.script_path, "--install"] + tool.args
         env = os.environ.copy()
         # The tool writes its own .desktop and alias via ToolInstaller, so it
         # needs to know which installer asked — otherwise a third-party org's
@@ -1171,9 +1183,17 @@ def install_tool(tool: ToolEntry, skip_deps: bool = False) -> tuple[bool, str]:
         return False, str(e)
 
 def remove_tool(tool: ToolEntry) -> tuple[bool, str]:
-    """Invokes the tool's own --remove argument. Returns (success, output)."""
+    """Invokes the tool's own --remove argument. Returns (success, output).
+
+    Runs in the tool's venv, provisioning nothing: removal must work even when
+    the environment is half-built, and it must not rebuild what it is about to
+    stop using. The shared venv stays behind — another installer's checkout of
+    the same upstream may still need it.
+    """
     try:
-        cmd = [sys.executable, tool.script_path, "--remove"] + tool.args
+        python = venvs.ensure_venv(os.path.dirname(tool.script_path),
+                                   provision=False)
+        cmd = [python, tool.script_path, "--remove"] + tool.args
         env = os.environ.copy()
         env.update(IDENTITY.env())   # remove the alias from OUR alias file
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
@@ -1194,7 +1214,12 @@ def install_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
     detect an up-to-date SKILL.md and no-op.
     """
     try:
-        cmd = [sys.executable, tool.script_path, "--install-skill"] + tool.args
+        # provision=False: ticking a skill box must not build a venv. An
+        # uninstalled tool still registers its skill, under whichever
+        # interpreter is to hand.
+        python = venvs.ensure_venv(os.path.dirname(tool.script_path),
+                                   provision=False)
+        cmd = [python, tool.script_path, "--install-skill"] + tool.args
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
                                 capture_output=True, text=True)
         output = (result.stdout + result.stderr).strip()
@@ -1208,7 +1233,9 @@ def install_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
 def uninstall_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
     """Invokes the tool's --uninstall-skill argument. Returns (success, output)."""
     try:
-        cmd = [sys.executable, tool.script_path, "--uninstall-skill"] + tool.args
+        python = venvs.ensure_venv(os.path.dirname(tool.script_path),
+                                   provision=False)
+        cmd = [python, tool.script_path, "--uninstall-skill"] + tool.args
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
                                 capture_output=True, text=True)
         output = (result.stdout + result.stderr).strip()
@@ -1419,8 +1446,15 @@ def get_autostart_path(tool: ToolEntry) -> str:
 
 
 def _cron_line_for_tool(tool: ToolEntry) -> str:
-    """Build the crontab line for a cron-based tool."""
-    parts = [tool.cron_schedule, sys.executable, tool.script_path] + list(tool.cron_args)
+    """Build the crontab line for a cron-based tool.
+
+    The interpreter is the tool's own venv, not the installer's: cron runs the
+    line long after the installer has exited, and the installer's Python has
+    none of the tool's dependencies.
+    """
+    python = venvs.ensure_venv(os.path.dirname(tool.script_path),
+                               provision=False)
+    parts = [tool.cron_schedule, python, tool.script_path] + list(tool.cron_args)
     return " ".join(parts)
 
 

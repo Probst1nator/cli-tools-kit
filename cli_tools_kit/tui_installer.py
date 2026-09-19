@@ -12,8 +12,9 @@ step, drawn with the stdlib ``curses`` module.
 
 Everything that touches the host goes through :mod:`gui_installer`'s
 primitives, looked up on that module at call time, so a wrapper that replaced
-them (FAU-WW3-Tools routes each tool through its own venv) is honoured here
-as well.
+them is honoured here as well. Routing each tool through its own venv is no
+longer something a wrapper has to do: :mod:`cli_tools_kit.venvs` is the default
+for both screens.
 
 Skill targets
 -------------

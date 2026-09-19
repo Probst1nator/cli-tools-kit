@@ -368,6 +368,31 @@ must `--remove` then `--install` to update them.
 | Internal module changes | no | Python reloads on each run |
 | Data directory changes | no | Paths resolved dynamically in code |
 
+## Which interpreter a tool runs under
+
+A tool never chooses its own interpreter. The installer runs `--install`,
+`--remove`, `--install-skill`, `--uninstall-skill` and any cron line with the
+venv that `cli_tools_kit.venvs` resolves for the tool's directory, and installs
+`requirements.txt` into that venv before `--install` runs. A tool author only
+has to make sure `requirements.txt` lists what the tool imports.
+
+That venv is shared by every checkout of the same upstream repo on the host,
+keyed by the normalised `origin` remote, and lives under the installer's cache
+directory rather than inside any checkout. Two parent installers offering the
+same tool therefore build its environment once. A checkout with no `origin`
+keeps a private `.venv` beside the script.
+
+Two consequences for a tool author:
+
+- **Do not assume the tool's directory is writable or that `.venv` is beside
+  the script.** Resolve data and config paths from `SCRIPT_DIR` or the user's
+  home, never from a venv location.
+- **Two checkouts at different commits share one environment.** The installer
+  reinstalls whenever the requirement lines change, so the environment matches
+  whichever checkout ran last. Pin loosely enough that two adjacent commits of
+  your tool can coexist; a `==` pin that moves every release forces a
+  reinstall on every switch between checkouts.
+
 ## The sources file (`installer.toml`)
 
 Where the `--advertise` probe describes one tool, this file describes where the
