@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install ruff
+      - run: ruff check .
+
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.11", "3.12", "3.13"]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[dev,gui]"
+      - run: pytest --cov --cov-report=term
+
+  # Builds the wheel, installs it into a clean venv and drives the example
+  # installer headless from there, so a module missing from the package or an
+  # import that only works from a checkout fails here instead of on PyPI.
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - name: Install the wheel into a clean venv
+        run: |
+          python -m venv "$RUNNER_TEMP/wheel-venv"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            echo "PY=$RUNNER_TEMP/wheel-venv/Scripts/python.exe" >> "$GITHUB_ENV"
+          else
+            echo "PY=$RUNNER_TEMP/wheel-venv/bin/python" >> "$GITHUB_ENV"
+          fi
+      - run: |
+          "$PY" -m pip install "$(ls dist/*.whl)[gui]"
+          "$PY" -c "import cli_tools_kit, cli_tools_kit.gui_installer, cli_tools_kit.sources, cli_tools_kit.venvs; print(cli_tools_kit.__version__)"
+          "$PY" -m cli_tools_kit --help
+      # Output goes through a pipe here, so on Windows Python writes it in the
+      # ANSI code page (cp1252) like it does for a real user's console log.
+      - name: Example installer, headless, in a sandbox home
+        run: |
+          export HOME="$RUNNER_TEMP/home" USERPROFILE="$RUNNER_TEMP/home"
+          export APPDATA="$RUNNER_TEMP/home/AppData/Roaming" LOCALAPPDATA="$RUNNER_TEMP/home/AppData/Local"
+          mkdir -p "$HOME"
+          cd "$RUNNER_TEMP" && cp -r "$GITHUB_WORKSPACE/examples" . && cd examples/org-installer
+          "$PY" installer.py --list
+          "$PY" installer.py --apply greeter --skill-target none
+          "$PY" installer.py --list | grep -F "[✓]"
