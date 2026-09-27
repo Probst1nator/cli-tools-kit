@@ -40,7 +40,6 @@ import os
 import sys
 import subprocess
 import stat
-import shlex
 import argparse
 import json
 import queue
@@ -59,15 +58,11 @@ except ImportError:  # pragma: no cover - exercised only where python3-tk is mis
     _HAVE_TK = False
 from typing import Callable, Dict, List, Optional, Sequence
 
-from . import host, state, settings, discovery, install, sweep
-from .cron_installer import read_crontab
+from . import host, state, settings, discovery, install, sweep, autostart
 from .identity import InstallerIdentity
 from .autostart_gate import (
     _parse_hhmm,
-    build_exec_prefix,
     current_ssids,
-    load_tool_conditions,
-    save_tool_conditions,
 )
 
 # Pillow renders tool icons. It is an optional extra (``cli-tools-kit[gui]``);
@@ -343,61 +338,6 @@ def _file_sig(path: str):
         return None
 
 
-def autostart_check_enabled() -> bool:
-    return os.path.exists(state.AUTOSTART_CHECK_DESKTOP)
-
-
-def enable_autostart_check() -> str:
-    """Write the login update-check autostart entry. Returns its path."""
-    os.makedirs(state.AUTOSTART_DIR, exist_ok=True)
-
-    if host.IS_WINDOWS:
-        # The Startup folder runs shortcuts; a .desktop file dropped there is
-        # never executed. pythonw keeps the console window from flashing up at
-        # every login, since the check reports through a notification anyway.
-        runner = sys.executable
-        windowless = os.path.join(os.path.dirname(runner), "pythonw.exe")
-        if os.path.exists(windowless):
-            runner = windowless
-        host.write_shortcut(
-            state.AUTOSTART_CHECK_DESKTOP,
-            target=runner,
-            args=f'"{state.ENTRY_SCRIPT}" --check',
-            workdir=os.path.dirname(state.ENTRY_SCRIPT),
-        )
-        return state.AUTOSTART_CHECK_DESKTOP
-
-    exec_line = f"{sys.executable} {state.ENTRY_SCRIPT} --check"
-    content = (
-        "[Desktop Entry]\n"
-        "Type=Application\n"
-        f"Name={state.SELF_DESKTOP_NAME} — login update check\n"
-        "Comment=Apply network-free tool reconciliations on login; notify for new tools\n"
-        f"Exec={exec_line}\n"
-        "Icon=system-software-update\n"
-        "Terminal=false\n"
-        "NoDisplay=true\n"
-        "X-KDE-autostart-after=panel\n"
-        "X-GNOME-Autostart-enabled=true\n"
-    )
-    with open(state.AUTOSTART_CHECK_DESKTOP, "w") as f:
-        f.write(content)
-    return state.AUTOSTART_CHECK_DESKTOP
-
-
-def disable_autostart_check() -> bool:
-    """Remove the login update-check autostart entry. True if one was present."""
-    removed = False
-    # On Windows, also clear the .desktop an older version wrote into the
-    # Startup folder, where it sat inert instead of running the check.
-    stale = os.path.join(state.AUTOSTART_DIR, state.AUTOSTART_CHECK_DESKTOP_NAME)
-    for path in {state.AUTOSTART_CHECK_DESKTOP, stale}:
-        if os.path.exists(path):
-            os.remove(path)
-            removed = True
-    return removed
-
-
 def _notify_send(summary: str, body: str = "") -> None:
     """Best-effort KDE/GNOME desktop notification; silently no-ops without notify-send."""
     if host.IS_WINDOWS:
@@ -410,219 +350,6 @@ def _notify_send(summary: str, body: str = "") -> None:
         )
     except (FileNotFoundError, subprocess.SubprocessError):
         pass
-
-
-# ================= AUTOSTART UTILITIES =================
-
-def get_autostart_path(tool: discovery.ToolEntry) -> str:
-    """Where a tool's autostart entry lives: a .desktop symlink in
-    ~/.config/autostart, or a copy of its .lnk in the Startup folder."""
-    if host.IS_WINDOWS:
-        return os.path.join(state.AUTOSTART_DIR,
-                            os.path.splitext(tool.desktop_file)[0] + ".lnk")
-    return os.path.join(state.AUTOSTART_DIR, tool.desktop_file)
-
-
-def _cron_line_for_tool(tool: discovery.ToolEntry) -> str:
-    """Build the crontab line for a cron-based tool."""
-    parts = [tool.cron_schedule, sys.executable, tool.script_path] + list(tool.cron_args)
-    return " ".join(parts)
-
-
-def _cron_contains(line: str) -> bool:
-    try:
-        result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-        return result.returncode == 0 and line in result.stdout
-    except Exception:
-        return False
-
-
-def is_autostart_enabled(tool: discovery.ToolEntry) -> bool:
-    """Check if autostart is enabled for a tool."""
-    if "Icon" in tool.tags:
-        return os.path.exists(get_autostart_path(tool))
-    if tool.cron_schedule:
-        return _cron_contains(_cron_line_for_tool(tool))
-    return False
-
-
-def autostart_tool_key(tool: discovery.ToolEntry) -> str:
-    """The key a tool's conditions are stored under.
-
-    The .desktop stem: stable across renames of the display name, and already
-    unique per installed shortcut.
-    """
-    return os.path.splitext(tool.desktop_file)[0]
-
-
-def get_autostart_conditions(tool: discovery.ToolEntry) -> dict:
-    """The conditions currently configured for *tool* on this host."""
-    return load_tool_conditions(state.IDENTITY.slug, autostart_tool_key(tool))
-
-
-def set_autostart_conditions(tool: discovery.ToolEntry, conditions: Optional[dict]) -> None:
-    """Store *tool*'s conditions, then rewrite its entry if autostart is on.
-
-    The Exec line differs between a gated and an ungated entry, so a change
-    here only takes effect once the entry is rewritten.
-    """
-    save_tool_conditions(state.IDENTITY.slug, autostart_tool_key(tool), conditions)
-    if is_autostart_enabled(tool):
-        enable_autostart(tool)
-
-
-def _read_desktop_exec(desktop_path: str) -> str:
-    """The Exec= line of an installed .desktop, or "" if it has none."""
-    try:
-        with open(desktop_path, "r", encoding="utf-8") as fh:
-            for line in fh:
-                if line.startswith("Exec="):
-                    return line[len("Exec="):].strip()
-    except OSError:
-        pass
-    return ""
-
-
-def _write_gated_autostart(tool: discovery.ToolEntry, desktop_path: str,
-                           autostart_path: str, conditions: dict) -> tuple[bool, str]:
-    """Write an autostart .desktop whose Exec runs *tool* through the gate.
-
-    A real file rather than the usual symlink: the app entry in the menu must
-    keep launching the tool unconditionally, so only this copy carries the
-    gate. Everything else is inherited from the installed entry.
-    """
-    exec_line = _read_desktop_exec(desktop_path)
-    if not exec_line:
-        return False, f"No Exec line in {desktop_path}"
-
-    prefix = " ".join(shlex.quote(p) for p in
-                      build_exec_prefix(state.IDENTITY.slug, autostart_tool_key(tool)))
-    gated_exec = f"{prefix} {exec_line}"
-
-    try:
-        with open(desktop_path, "r", encoding="utf-8") as fh:
-            lines = fh.read().splitlines()
-    except OSError as e:
-        return False, f"Failed to read {desktop_path}: {e}"
-
-    out = []
-    for line in lines:
-        if line.startswith("Exec="):
-            out.append(f"Exec={gated_exec}")
-        elif line.startswith("X-CliToolsKit-Gated="):
-            continue
-        else:
-            out.append(line)
-    # Marks the entry as ours and generated, so it is obvious in a diff why
-    # this one is a file where every other autostart entry is a symlink.
-    out.append("X-CliToolsKit-Gated=true")
-
-    try:
-        if os.path.exists(autostart_path) or os.path.islink(autostart_path):
-            os.remove(autostart_path)
-        with open(autostart_path, "w", encoding="utf-8") as fh:
-            fh.write("\n".join(out) + "\n")
-        # Deliberately not executable: systemd-xdg-autostart-generator warns
-        # on every login about an executable entry in ~/.config/autostart.
-        exec_bits = stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-        os.chmod(autostart_path, os.stat(autostart_path).st_mode & ~exec_bits)
-    except OSError as e:
-        return False, f"Failed to write {autostart_path}: {e}"
-
-    return True, f"Autostart enabled (conditional): {tool.name}"
-
-
-def enable_autostart(tool: discovery.ToolEntry) -> tuple[bool, str]:
-    """Enable autostart for a tool.
-
-    Icon tools: create a .desktop symlink in ~/.config/autostart.
-    Cron tools: add an @reboot (or other schedule) crontab entry.
-
-    Returns (success, message).
-    """
-    if "Icon" in tool.tags:
-        if host.IS_WINDOWS:
-            stem = os.path.splitext(tool.desktop_file)[0]
-            lnk_path = os.path.join(state.APPS_DIR, stem + ".lnk")
-            if not os.path.exists(lnk_path):
-                return False, f"Shortcut not found: {lnk_path}"
-            os.makedirs(state.AUTOSTART_DIR, exist_ok=True)
-            try:
-                import shutil
-                shutil.copyfile(lnk_path, get_autostart_path(tool))
-                return True, f"Autostart enabled: {tool.name}"
-            except OSError as e:
-                return False, f"Failed to copy shortcut: {e}"
-
-        desktop_path = os.path.join(state.APPS_DIR, tool.desktop_file)
-        if not os.path.exists(desktop_path):
-            return False, f"Desktop file not found: {desktop_path}"
-
-        os.makedirs(state.AUTOSTART_DIR, exist_ok=True)
-        autostart_path = get_autostart_path(tool)
-
-        # A tool with conditions configured gets a gated copy instead of the
-        # plain symlink, so the menu entry stays unconditional.
-        conditions = get_autostart_conditions(tool)
-        if conditions:
-            return _write_gated_autostart(tool, desktop_path, autostart_path, conditions)
-
-        if os.path.exists(autostart_path) or os.path.islink(autostart_path):
-            os.remove(autostart_path)
-
-        try:
-            os.symlink(desktop_path, autostart_path)
-            return True, f"Autostart enabled: {tool.name}"
-        except OSError as e:
-            return False, f"Failed to create symlink: {e}"
-
-    if tool.cron_schedule:
-        if host.IS_WINDOWS:
-            return False, "Cron autostart is not supported on Windows"
-        line = _cron_line_for_tool(tool)
-        try:
-            existing = read_crontab()   # raises rather than read a failure as empty
-            if line in existing:
-                return True, "Cron entry already present"
-            new_crontab = existing.rstrip("\n") + ("\n" if existing else "") + line + "\n"
-            subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
-            return True, f"Cron entry added: {line}"
-        except Exception as e:
-            return False, f"Failed to add cron entry: {e}"
-
-    return False, "Tool has no supported autostart method"
-
-
-def disable_autostart(tool: discovery.ToolEntry) -> tuple[bool, str]:
-    """Disable autostart for a tool.
-
-    Returns (success, message).
-    """
-    if "Icon" in tool.tags:
-        autostart_path = get_autostart_path(tool)
-        if not os.path.exists(autostart_path) and not os.path.islink(autostart_path):
-            return True, "Already disabled"
-        try:
-            os.remove(autostart_path)
-            return True, f"Autostart disabled: {tool.name}"
-        except OSError as e:
-            return False, f"Failed to remove {'shortcut' if host.IS_WINDOWS else 'symlink'}: {e}"
-
-    if tool.cron_schedule:
-        if host.IS_WINDOWS:
-            return False, "Cron autostart is not supported on Windows"
-        line = _cron_line_for_tool(tool)
-        try:
-            existing = read_crontab()
-            if line not in existing:
-                return True, "Already disabled"
-            new_crontab = "\n".join(l for l in existing.splitlines() if l != line) + "\n"
-            subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
-            return True, f"Cron entry removed: {tool.name}"
-        except Exception as e:
-            return False, f"Failed to remove cron entry: {e}"
-
-    return True, "Already disabled"
 
 
 # ================= ICON UTILITIES =================
@@ -1668,7 +1395,7 @@ class InstallerApp:
         # reconciliations the badge does (no pip) and notifies for new tools. Same
         # safety class as the badge, so it sits in the badge's group.
         ttk.Separator(footer, orient="vertical").pack(side="left", fill="y", padx=15)
-        self._autostart_check_var = tk.BooleanVar(value=autostart_check_enabled())
+        self._autostart_check_var = tk.BooleanVar(value=autostart.autostart_check_enabled())
         self._autostart_check_cb = ttk.Checkbutton(
             footer, text="Check on login", variable=self._autostart_check_var,
             command=self._toggle_autostart_check)
@@ -1858,7 +1585,7 @@ class InstallerApp:
         bg, fg, accent, muted = t["bg"], t["fg"], t["accent"], t["muted"]
         input_bg = t.get("canvas_bg", bg)
 
-        saved = get_autostart_conditions(tool)
+        saved = autostart.get_autostart_conditions(tool)
 
         dialog = tk.Toplevel(self.root)
         dialog.title(f"Auto-Start conditions — {tool.name}")
@@ -1964,7 +1691,7 @@ class InstallerApp:
             conditions = collect()
             if conditions is None:
                 return
-            set_autostart_conditions(tool, conditions)
+            autostart.set_autostart_conditions(tool, conditions)
             self._refresh_autostart_gear(tool_key)
             dialog.destroy()
 
@@ -1991,7 +1718,7 @@ class InstallerApp:
         tool = self.tools_by_key.get(tool_key)
         if gear is None or tool is None:
             return
-        style = "CardAccent.TLabel" if get_autostart_conditions(tool) else "CardMuted.TLabel"
+        style = "CardAccent.TLabel" if autostart.get_autostart_conditions(tool) else "CardMuted.TLabel"
         try:
             gear.configure(style=style)
         except tk.TclError:
@@ -3510,7 +3237,7 @@ class InstallerApp:
         autostart_frame = cells["autostart"]
         if "Icon" in tool.tags or tool.cron_schedule:
             autostart_default = (
-                is_autostart_enabled(tool)
+                autostart.is_autostart_enabled(tool)
                 if install.is_installed(tool)
                 else tool.default_autostart
             )
@@ -3659,7 +3386,7 @@ class InstallerApp:
         autostart_frame = cells["autostart"]
         if "Icon" in parent.tags or parent.cron_schedule:
             autostart_default = (
-                is_autostart_enabled(parent)
+                autostart.is_autostart_enabled(parent)
                 if install.is_installed(parent)
                 else parent.default_autostart
             )
@@ -4412,8 +4139,8 @@ class InstallerApp:
                 elif not should_be and currently:
                     log(f"Removing: {tool.name}")
                     # Also disable autostart if enabled
-                    if is_autostart_enabled(tool):
-                        disable_autostart(tool)
+                    if autostart.is_autostart_enabled(tool):
+                        autostart.disable_autostart(tool)
                         if key in autostart_state:
                             events.put(("uncheck_autostart", key))
                     success, output = install.remove_tool(tool)
@@ -4434,11 +4161,11 @@ class InstallerApp:
                     continue  # Not an Icon-tagged tool
 
                 should_autostart = autostart_state.get(key, False)
-                currently_autostart = is_autostart_enabled(tool)
+                currently_autostart = autostart.is_autostart_enabled(tool)
                 tool_installed = install.is_installed(tool)
 
                 if should_autostart and not currently_autostart and tool_installed:
-                    success, msg = enable_autostart(tool)
+                    success, msg = autostart.enable_autostart(tool)
                     if success:
                         autostart_enabled += 1
                         log(f"  ✓ Autostart enabled: {tool.name}", "success")
@@ -4446,7 +4173,7 @@ class InstallerApp:
                         errors += 1
                         log(f"  ✗ Autostart failed: {tool.name} - {msg}", "error")
                 elif not should_autostart and currently_autostart:
-                    success, msg = disable_autostart(tool)
+                    success, msg = autostart.disable_autostart(tool)
                     if success:
                         autostart_disabled += 1
                         log(f"  ✓ Autostart disabled: {tool.name}", "success")
@@ -4598,11 +4325,11 @@ class InstallerApp:
     def _toggle_autostart_check(self):
         """Enable/disable the login update-check autostart entry."""
         if self._autostart_check_var.get():
-            path = enable_autostart_check()
+            path = autostart.enable_autostart_check()
             self._log(f"Login update check enabled → {path}", "success")
             self._log("  On login: applies local reconciliations (no pip), notifies for new tools.", "info")
         else:
-            disable_autostart_check()
+            autostart.disable_autostart_check()
             self._log("Login update check disabled.", "info")
 
     def _reinstall_deps(self):
@@ -5210,13 +4937,13 @@ def main():
         sys.exit(cli_check())
 
     if args.enable_autostart_check:
-        path = enable_autostart_check()
+        path = autostart.enable_autostart_check()
         print(f"{host.symbol('✓', 'OK')} Login update check enabled: {path}")
         print(f"  Runs: {sys.executable} {state.ENTRY_SCRIPT} --check")
         return
 
     if args.disable_autostart_check:
-        print(f"{host.symbol('✓', 'OK')} Login update check disabled" if disable_autostart_check()
+        print(f"{host.symbol('✓', 'OK')} Login update check disabled" if autostart.disable_autostart_check()
               else "• Login update check was not enabled")
         return
 
@@ -5386,7 +5113,7 @@ def run(*, identity: Optional[InstallerIdentity] = None,
 # globals (gi.IDENTITY, gi.install_tool = ...). Those names now live in the
 # modules below. Reading, assigning or deleting one through gui_installer goes
 # to the module that holds it, where every screen looks it up at call time.
-_ENGINE_MODULES = (state, settings, discovery, install, sweep)
+_ENGINE_MODULES = (state, settings, discovery, install, sweep, autostart)
 
 
 def _home_of(name: str):
