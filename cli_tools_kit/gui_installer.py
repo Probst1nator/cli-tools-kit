@@ -59,7 +59,7 @@ except ImportError:  # pragma: no cover - exercised only where python3-tk is mis
     _HAVE_TK = False
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence
 
-from . import host, state
+from . import host, state, settings
 from .cron_installer import read_crontab
 from .identity import InstallerIdentity
 from .autostart_gate import (
@@ -196,65 +196,6 @@ def group_tools(tools: List[ToolEntry]) -> List[ToolGroup]:
             groups.append(ToolGroup(parent=script_tools[0], children=script_tools[1:]))
     return groups
 
-def load_config() -> dict:
-    """Load config from file, return empty dict if not found."""
-    try:
-        with open(state.CONFIG_FILE, "r") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {}
-
-def save_config(config: dict):
-    """Save config to file."""
-    os.makedirs(state.CONFIG_DIR, exist_ok=True)
-    with open(state.CONFIG_FILE, "w") as f:
-        json.dump(config, f)
-
-
-def get_auto_update_on_startup() -> bool:
-    """Whether this GUI should silently apply pending local updates the next
-    time it launches (the "Auto-update on startup" checkbox next to the
-    Up-to-date badge)."""
-    return bool(load_config().get("auto_update_on_startup", False))
-
-
-def set_auto_update_on_startup(enabled: bool):
-    """Persist the 'Auto-update on startup' checkbox state."""
-    config = load_config()
-    config["auto_update_on_startup"] = enabled
-    save_config(config)
-
-
-def get_custom_icon_path(tool_key: str) -> Optional[str]:
-    """Get custom icon path for a tool if one exists.
-
-    Args:
-        tool_key: Unique key like "Category_ToolName"
-
-    Returns:
-        Path to custom icon file, or None
-    """
-    config = load_config()
-    custom_icons = config.get("custom_icons", {})
-    icon_path = custom_icons.get(tool_key)
-    if icon_path and os.path.exists(icon_path):
-        return icon_path
-    return None
-
-
-def set_custom_icon(tool_key: str, icon_path: str):
-    """Set a custom icon for a tool.
-
-    Args:
-        tool_key: Unique key like "Category_ToolName"
-        icon_path: Path to the icon file
-    """
-    config = load_config()
-    if "custom_icons" not in config:
-        config["custom_icons"] = {}
-    config["custom_icons"][tool_key] = icon_path
-    save_config(config)
-
 
 def get_system_icons() -> List[tuple]:
     """Get list of system icons available on the system.
@@ -300,45 +241,6 @@ def iter_system_icons():
                     yield (name, os.path.join(icon_dir, f))
         except (OSError, PermissionError):
             continue
-
-
-def clear_custom_icon(tool_key: str):
-    """Remove custom icon for a tool, reverting to default."""
-    config = load_config()
-    if "custom_icons" in config and tool_key in config["custom_icons"]:
-        del config["custom_icons"][tool_key]
-        save_config(config)
-
-
-def get_icon_gen_settings() -> dict:
-    """Get saved icon generation settings.
-
-    Returns:
-        Dict with keys: steps, samples, guidance, selected_models, expanded, sys_icons_expanded
-    """
-    config = load_config()
-    return config.get("icon_gen_settings", {
-        "steps": 20,
-        "samples": 4,
-        "guidance": 7.5,
-        "selected_models": [],  # Empty means select all available
-        "expanded": True,  # Show advanced options by default
-        "sys_icons_expanded": True
-    })
-
-
-def save_icon_gen_settings(steps: int, samples: int, guidance: float, selected_models: list, expanded: bool, sys_icons_expanded: bool = True):
-    """Save icon generation settings."""
-    config = load_config()
-    config["icon_gen_settings"] = {
-        "steps": steps,
-        "samples": samples,
-        "guidance": guidance,
-        "selected_models": selected_models,
-        "expanded": expanded,
-        "sys_icons_expanded": sys_icons_expanded
-    }
-    save_config(config)
 
 
 # Emoji collection for icon browser - generated from Unicode emoji ranges
@@ -489,22 +391,6 @@ def render_emoji_icon(emoji_char: str, output_path: str, size: int = 128) -> boo
         pass
 
     return False
-
-
-def get_tool_prompt(tool_key: str, default_name: str) -> str:
-    """Get saved prompt for a specific tool."""
-    config = load_config()
-    prompts = config.get("icon_prompts", {})
-    return prompts.get(tool_key, f"app icon for {default_name}, flat design, minimal")
-
-
-def save_tool_prompt(tool_key: str, prompt: str):
-    """Save prompt for a specific tool."""
-    config = load_config()
-    if "icon_prompts" not in config:
-        config["icon_prompts"] = {}
-    config["icon_prompts"][tool_key] = prompt
-    save_config(config)
 
 
 # ================= METADATA EXTRACTION =================
@@ -1798,7 +1684,7 @@ class InstallerApp:
         self.tools = tools
         self.root.title(state.WINDOW_TITLE)
         self._set_window_icon()
-        saved_theme = load_config().get("theme", "ocean")
+        saved_theme = settings.load_config().get("theme", "ocean")
         self.current_theme = saved_theme if saved_theme in self.THEMES else "ocean"
 
         self.check_vars: Dict[str, tk.BooleanVar] = {}
@@ -2109,12 +1995,12 @@ class InstallerApp:
 
     def _select_theme(self, theme_name: str):
         """Explicit theme-button click: reset any accent override, then apply."""
-        cfg = load_config()
+        cfg = settings.load_config()
         overrides = cfg.get("accent_overrides", {})
         had_override = overrides.pop(theme_name, None) is not None
         if had_override:
             cfg["accent_overrides"] = overrides
-            save_config(cfg)
+            settings.save_config(cfg)
         self._apply_theme(theme_name)
         # Same theme re-clicked to shed its override: _apply_theme won't
         # rebuild (no name change), so rebuild here to drop the old accent.
@@ -2128,9 +2014,9 @@ class InstallerApp:
                                     title="Theme base color")[1]
         if not rgb:
             return
-        cfg = load_config()
+        cfg = settings.load_config()
         cfg.setdefault("accent_overrides", {})[self.current_theme] = rgb
-        save_config(cfg)
+        settings.save_config(cfg)
         # _rebuild_ui → _setup_ui → _apply_theme re-derives the palette
         # from the stored base color.
         self._rebuild_ui()
@@ -2142,9 +2028,9 @@ class InstallerApp:
 
         old_theme = getattr(self, 'current_theme', None)
         self.current_theme = theme_name
-        cfg = load_config()
+        cfg = settings.load_config()
         cfg["theme"] = theme_name
-        save_config(cfg)
+        settings.save_config(cfg)
         # Effective theme dict: stock palette, or — when the 🎨 picker set a
         # base color for this theme (persisted in config) — a full palette
         # re-derived from that base color.
@@ -2492,7 +2378,7 @@ class InstallerApp:
         # the same network-free reconciliation as clicking the badge to its
         # right — logging what it did to the Operation Log so it stays visible
         # even though it ran automatically. Sits immediately left of the badge.
-        self._auto_update_startup_var = tk.BooleanVar(value=get_auto_update_on_startup())
+        self._auto_update_startup_var = tk.BooleanVar(value=settings.get_auto_update_on_startup())
         auto_update_cb = ttk.Checkbutton(
             footer, variable=self._auto_update_startup_var,
             command=self._toggle_auto_update_startup)
@@ -2686,7 +2572,7 @@ class InstallerApp:
             Tuple of (icon_name_or_path, PhotoImage or None)
         """
         key = f"{tool.category}_{tool.name}"
-        custom_path = get_custom_icon_path(key)
+        custom_path = settings.get_custom_icon_path(key)
         if custom_path:
             return custom_path, self._get_tool_icon(custom_path)
         return tool.icon, self._get_tool_icon(tool.icon)
@@ -2930,7 +2816,7 @@ class InstallerApp:
                                  bg=bg, fg=fg, font=("", 16))
         preview_label.pack()
 
-        custom_path = get_custom_icon_path(tool_key)
+        custom_path = settings.get_custom_icon_path(tool_key)
         src = f"Custom: {os.path.basename(custom_path)}" if custom_path else f"Default: {tool.icon}"
         source_label = tk.Label(current_frame, text=src, bg=bg, fg=muted, font=("", 9))
         source_label.pack()
@@ -3060,7 +2946,7 @@ class InstallerApp:
         def do_accept():
             if selected_image[0] and os.path.exists(selected_image[0]):
                 save_current_settings()
-                set_custom_icon(tool_key, selected_image[0])
+                settings.set_custom_icon(tool_key, selected_image[0])
                 self._refresh_tool_icon(tool_key)
                 cleanup_scroll_bindings()
                 dialog.destroy()
@@ -3085,7 +2971,7 @@ class InstallerApp:
         prompt_text = tk.Text(content_frame, height=2, bg=input_bg, fg=fg, font=("", 10),
                               insertbackground=fg, relief=tk.SUNKEN, bd=1)
         prompt_text.pack(fill=tk.X, padx=20, pady=(5, 5))
-        prompt_text.insert("1.0", get_tool_prompt(tool_key, tool.name))
+        prompt_text.insert("1.0", settings.get_tool_prompt(tool_key, tool.name))
 
         # Enable Ctrl+A to select all
         def select_all(event):
@@ -3102,11 +2988,11 @@ class InstallerApp:
             if prompt_save_pending[0]:
                 dialog.after_cancel(prompt_save_pending[0])
             # Schedule save after 500ms of no typing
-            prompt_save_pending[0] = dialog.after(500, lambda: save_tool_prompt(tool_key, prompt_text.get("1.0", tk.END).strip()))
+            prompt_save_pending[0] = dialog.after(500, lambda: settings.save_tool_prompt(tool_key, prompt_text.get("1.0", tk.END).strip()))
         prompt_text.bind("<KeyRelease>", save_prompt_debounced)
 
         # Load saved settings
-        saved_settings = get_icon_gen_settings()
+        saved_settings = settings.get_icon_gen_settings()
 
         # Advanced options variables (created now, UI packed after gen_btn)
         adv_expanded = tk.BooleanVar(value=saved_settings.get("expanded", False))
@@ -3134,7 +3020,7 @@ class InstallerApp:
                 sys_expanded = sys_icons_expanded.get()
             except NameError:
                 sys_expanded = True
-            save_icon_gen_settings(
+            settings.save_icon_gen_settings(
                 steps=steps_var.get(),
                 samples=samples_var.get(),
                 guidance=guidance_var.get(),
@@ -3145,7 +3031,7 @@ class InstallerApp:
             # Save prompt per-tool (only if prompt_text exists)
             try:
                 current_prompt = prompt_text.get("1.0", tk.END).strip()
-                save_tool_prompt(tool_key, current_prompt)
+                settings.save_tool_prompt(tool_key, current_prompt)
             except NameError:
                 pass  # prompt_text not yet created
 
@@ -3496,7 +3382,7 @@ class InstallerApp:
                 def use_variation(v=variation):
                     prompt_text.delete("1.0", tk.END)
                     prompt_text.insert("1.0", v)
-                    save_tool_prompt(tool_key, v)
+                    settings.save_tool_prompt(tool_key, v)
 
                 tk.Button(row, text="Use", command=use_variation, bg=input_bg, fg=fg,
                          font=("", 7), relief=tk.GROOVE, cursor="hand2", padx=4, pady=0).pack(side=tk.RIGHT)
@@ -3675,7 +3561,7 @@ class InstallerApp:
                 dest = os.path.join(state.CUSTOM_ICONS_DIR,
                                     f"{tool_key.replace(' ', '_').lower()}{os.path.splitext(path)[1]}")
                 shutil.copy2(path, dest)
-                set_custom_icon(tool_key, dest)
+                settings.set_custom_icon(tool_key, dest)
                 self._refresh_tool_icon(tool_key)
                 cleanup_scroll_bindings()
                 dialog.destroy()
@@ -3706,7 +3592,7 @@ class InstallerApp:
             ext = os.path.splitext(icon_path)[1]
             dest = os.path.join(state.CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_icon{ext}")
             shutil.copy2(icon_path, dest)
-            set_custom_icon(tool_key, dest)
+            settings.set_custom_icon(tool_key, dest)
             self._refresh_tool_icon(tool_key)
             cleanup_scroll_bindings()
             dialog.destroy()
@@ -4089,7 +3975,7 @@ class InstallerApp:
         if custom_path:
             def do_reset():
                 save_current_settings()
-                clear_custom_icon(tool_key)
+                settings.clear_custom_icon(tool_key)
                 self.icon_cache.pop(custom_path, None)
                 self._refresh_tool_icon(tool_key)
                 cleanup_scroll_bindings()
@@ -5425,7 +5311,7 @@ class InstallerApp:
 
     def _toggle_auto_update_startup(self):
         """Persist the 'Auto-update on startup' checkbox to config.json."""
-        set_auto_update_on_startup(self._auto_update_startup_var.get())
+        settings.set_auto_update_on_startup(self._auto_update_startup_var.get())
 
     def _maybe_auto_update_on_startup(self):
         """Run once per GUI launch, after the initial status scan. If the user
@@ -6234,7 +6120,7 @@ def run(*, identity: Optional[InstallerIdentity] = None,
 # globals (gi.IDENTITY, gi.install_tool = ...). Those names now live in the
 # modules below. Reading, assigning or deleting one through gui_installer goes
 # to the module that holds it, where every screen looks it up at call time.
-_ENGINE_MODULES = (state,)
+_ENGINE_MODULES = (state, settings)
 
 
 def _home_of(name: str):
