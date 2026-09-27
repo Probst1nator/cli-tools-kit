@@ -136,3 +136,26 @@ def test_install_rejects_line_with_existing_tag(fake_crontab: Path) -> None:
     cron = CronInstaller("self")
     with pytest.raises(ValueError):
         cron.install(["@reboot foo  # cli-tool-kit:self"])
+
+
+def test_remove_unmarked_takes_only_untagged_matching_lines(fake_crontab: Path) -> None:
+    fake_crontab.write_text(
+        "@reboot python3 /old/studon_client.py --daily-sync\n"
+        "0 3 * * * backup.sh\n"
+    )
+    cron = CronInstaller("studon-client")
+    cron.install(["@reboot python3 /new/studon_client.py --daily-sync"])
+
+    removed = cron.remove_unmarked(lambda line: "studon_client.py" in line)
+
+    assert removed == 1
+    lines = fake_crontab.read_text().splitlines()
+    assert "0 3 * * * backup.sh" in lines
+    # The tagged line matches the predicate too, and stays.
+    assert cron.installed_lines() == ["@reboot python3 /new/studon_client.py --daily-sync"]
+
+
+def test_remove_unmarked_leaves_the_crontab_alone_when_nothing_matches(fake_crontab: Path) -> None:
+    fake_crontab.write_text("0 3 * * * backup.sh\n")
+    assert CronInstaller("x").remove_unmarked(lambda line: False) == 0
+    assert fake_crontab.read_text() == "0 3 * * * backup.sh\n"

@@ -21,7 +21,7 @@ Example:
 from __future__ import annotations
 
 import subprocess
-from typing import List
+from typing import Callable, List
 
 try:
     from termcolor import colored
@@ -142,6 +142,22 @@ class CronInstaller:
             f"Removed {removed_count} cron line(s) for marker '{self.marker}'.",
             "green",
         ))
+
+    def remove_unmarked(self, match: Callable[[str], bool]) -> int:
+        """Remove cron lines that carry no kit tag and satisfy ``match``.
+
+        For a tool migrating from hand-written cron lines to this class: pass a
+        predicate that recognises its old lines (script name, flags). Lines
+        tagged by any CronInstaller are never touched, whatever ``match`` says.
+        A failing ``crontab -l`` raises instead of being read as empty, so the
+        crontab is never rewritten from nothing. Returns how many lines went.
+        """
+        lines = self._read().splitlines()
+        kept = [line for line in lines if _TAG_PREFIX in line or not match(line)]
+        if len(kept) == len(lines):
+            return 0
+        self._write("\n".join(kept))
+        return len(lines) - len(kept)
 
     def is_installed(self) -> bool:
         """Return True iff any crontab line bears this installer's tag."""

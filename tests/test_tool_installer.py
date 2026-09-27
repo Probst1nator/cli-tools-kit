@@ -285,3 +285,16 @@ def test_advertise_emits_taxonomy_and_skill_fields_only_when_set(capsys) -> None
     rec = json.loads(capsys.readouterr().out)[0]
     for key in ("capability", "domain", "category", "skill_name", "skill_status"):
         assert key not in rec
+
+
+def test_variants_selects_by_desktop_file(sandbox_home: Path) -> None:
+    public = ToolMetadata(name="Voice", desktop_file="voice.desktop", icon="x",
+                          desc="d", tags=["GUI", "Icon"])
+    private = ToolMetadata(name="Voice (Private)", desktop_file="voice-private.desktop",
+                           icon="x", desc="d", tags=["GUI", "Icon"])
+    installer = ToolInstaller(script_path=_make_script(sandbox_home),
+                              metadata=[public, private])
+    assert installer.variants() == [public, private]
+    assert installer.variants("voice-private.desktop") == [private]
+    with pytest.raises(ValueError):
+        installer.variants("missing.desktop")

@@ -131,6 +131,16 @@ class ToolInstaller:
             os.path.expanduser("~"), ".local", "share", "applications"
         )
 
+    def variants(self, desktop_file: Optional[str] = None) -> List[ToolMetadata]:
+        """The metadata entries for ``desktop_file``, or all of them for None.
+
+        A tool with several variants (one script, several .desktop entries)
+        uses this to act on the ones ``install``/``remove`` will touch, for
+        example to drop their autostart entries first. Raises ValueError for
+        a ``desktop_file`` no variant has.
+        """
+        return self._select(desktop_file)
+
     def _select(self, desktop_file: Optional[str]) -> List[ToolMetadata]:
         """Return metadata entries matching desktop_file, or all if None."""
         if desktop_file is None:
