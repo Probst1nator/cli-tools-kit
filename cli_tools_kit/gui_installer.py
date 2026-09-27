@@ -3817,8 +3817,10 @@ class InstallerApp:
                             dialog.after(0, mark_failed)
 
                     except Exception as e:
+                        error_msg = str(e)[:20]
+
                         def mark_error():
-                            update_grid_cell(idx, None, f"Error: {str(e)[:20]}")
+                            update_grid_cell(idx, None, f"Error: {error_msg}")
                             current_index[0] += 1
                             dialog.after(100, generate_next_varied)
                         dialog.after(0, mark_error)
