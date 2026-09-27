@@ -127,6 +127,23 @@ def head_commit(tool_dir: str) -> Optional[str]:
     return result.stdout.strip() or None
 
 
+def repo_subdir(tool_dir: str) -> str:
+    """Path of ``tool_dir`` inside its checkout, ``""`` at the root.
+
+    Always forward slashes, so the key is the same on Windows and Linux.
+    """
+    try:
+        result = subprocess.run(
+            ["git", "-C", tool_dir, "rev-parse", "--show-prefix"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip().strip("/")
+
+
 def upstream_key(tool_dir: str) -> Optional[str]:
     """Stable directory name for the venv shared by one upstream repo.
 
@@ -136,6 +153,12 @@ def upstream_key(tool_dir: str) -> Optional[str]:
     normalised = normalise_remote(origin_url(tool_dir) or "")
     if not normalised:
         return None
+    # A tool in a subdirectory of a multi-tool repo gets its own venv: keyed
+    # on the origin alone, every tool of that repo would pip its pins into
+    # one environment. A tool at the repo root keeps the origin-only key.
+    subdir = repo_subdir(tool_dir)
+    if subdir:
+        normalised = f"{normalised}/{subdir}"
     digest = hashlib.sha256(normalised.encode("utf-8")).hexdigest()[:12]
     # The leaf name is readable on purpose: a user looking through the cache
     # should see which tool a directory belongs to without resolving a hash.

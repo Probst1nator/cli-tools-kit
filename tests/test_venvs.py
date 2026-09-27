@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import subprocess
 from pathlib import Path
 
@@ -93,6 +94,43 @@ def test_two_checkouts_of_one_upstream_share_a_venv(sandbox_home: Path) -> None:
     second = _checkout(sandbox_home, "installer-b/manim-kit",
                        "https://github.com/Org/manim-kit")
     assert venvs.venv_for(str(first)) == venvs.venv_for(str(second))
+
+
+def _monorepo(home: Path, name: str, origin: str, tools: list) -> Path:
+    """One git checkout holding several tools in subdirectories."""
+    root = home / name
+    root.mkdir(parents=True)
+    subprocess.run(["git", "init", "-q", str(root)], check=True)
+    subprocess.run(["git", "-C", str(root), "remote", "add", "origin", origin],
+                   check=True)
+    for tool in tools:
+        (root / tool).mkdir()
+        (root / tool / "requirements.txt").write_text("somedep==1.0\n")
+    return root
+
+
+def test_tools_of_one_monorepo_get_their_own_venvs(sandbox_home: Path) -> None:
+    """A tree like tools/ holds ~50 tools behind one origin. Keyed on the
+    origin alone they would share one venv, and each install would pip its
+    own pins over the others' (one tool pinning an old cli-tools-kit would
+    downgrade the kit under every tool)."""
+    root = _monorepo(sandbox_home, "tools", "git@example.org:me/tools.git",
+                     ["jarvis", "lmchat"])
+    assert venvs.venv_for(str(root / "jarvis")) != venvs.venv_for(str(root / "lmchat"))
+
+
+def test_one_monorepo_tool_shares_across_checkouts(sandbox_home: Path) -> None:
+    first = _monorepo(sandbox_home, "a/tools", "git@example.org:me/tools.git", ["jarvis"])
+    second = _monorepo(sandbox_home, "b/tools", "https://example.org/me/tools", ["jarvis"])
+    assert venvs.venv_for(str(first / "jarvis")) == venvs.venv_for(str(second / "jarvis"))
+
+
+def test_repo_root_tool_keeps_its_key(sandbox_home: Path) -> None:
+    """A tool at the root of its own repo keys on the origin alone, as it did
+    before subdirectories counted, so venvs already built stay found."""
+    tool = _checkout(sandbox_home, "manim-kit", "git@github.com:Org/manim-kit.git")
+    digest = hashlib.sha256(b"github.com/org/manim-kit").hexdigest()[:12]
+    assert venvs.upstream_key(str(tool)) == f"manim-kit-{digest}"
 
 
 def test_checkout_without_origin_keeps_a_private_venv(sandbox_home: Path) -> None:
