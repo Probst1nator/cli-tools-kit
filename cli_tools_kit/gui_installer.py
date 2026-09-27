@@ -59,9 +59,9 @@ except ImportError:  # pragma: no cover - exercised only where python3-tk is mis
     _HAVE_TK = False
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence
 
-from . import host
+from . import host, state
 from .cron_installer import read_crontab
-from .identity import InstallerIdentity, LEGACY_IDENTITY
+from .identity import InstallerIdentity
 from .autostart_gate import (
     KNOWN_CONDITIONS,
     _parse_hhmm,
@@ -137,112 +137,12 @@ _ROW_HOVER_STYLES = {
 }
 _ROW_HOVER_STYLES_REV = {v: k for k, v in _ROW_HOVER_STYLES.items()}
 
-# ROOT_DIR — the project tree being managed. Defaults to the directory of this
-# module for standalone use, but a wrapper almost always overrides it via
-# run(root_dir=...) to point at its own tree (so discovery, .env, and the
-# self-shortcut Path= all anchor to the wrapper, not the cli-tools-kit checkout).
-ROOT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-# ENTRY_SCRIPT — the script a wrapper wants launched by the manager .desktop and
-# the login-check autostart entry. Defaults to this module; run(entry_script=...)
-# points it at the wrapper so those launchers invoke the wrapper (which restores
-# the wrapper's configuration), never this bare engine.
-ENTRY_SCRIPT = os.path.abspath(__file__)
-
-
-def _load_env() -> None:
-    """Best-effort load of ROOT_DIR/.env (re-callable after ROOT_DIR changes)."""
-    try:
-        from dotenv import load_dotenv
-        load_dotenv(os.path.join(ROOT_DIR, ".env"))
-    except ImportError:
-        pass  # dotenv not installed, rely on system environment
-
-
-_load_env()
-
-# Where a tool's shortcut goes: the freedesktop applications directory, or the
-# Start Menu on Windows.
-APPS_DIR = (host.start_menu_dir() if host.IS_WINDOWS
-            else os.path.join(os.path.expanduser("~"), ".local", "share", "applications"))
-
-# IDENTITY — who this installer is on the host: the .desktop marker it claims,
-# and where its config, icon overrides, alias file and cache live. Defaults to
-# the historical first-party names so an existing install is untouched; a third
-# party passes run(identity=InstallerIdentity(slug="acme-tools")) and gets its
-# own namespace for all of it. See identity.py and README § Reusing the
-# installer in your org.
-IDENTITY: InstallerIdentity = LEGACY_IDENTITY
-
-CONFIG_DIR = IDENTITY.config_path
-CONFIG_FILE = IDENTITY.config_file
-CUSTOM_ICONS_DIR = IDENTITY.icons_dir  # Custom tool icons
-CLAUDE_SKILLS_DIR = os.path.join(os.path.expanduser("~"), ".claude", "skills")
-
-# Runtime config — overridable by thin wrappers that re-use this module as a
-# library (e.g. tools/installer.py, AutomatedAlchemy/installer.py). Wrappers
-# import this module, mutate these globals (or pass them to run()), then launch.
-# All defaults match the historical tools/installer.py behavior, so this module
-# stays runnable standalone.
-WINDOW_TITLE = IDENTITY.display_title
-DISCOVERY_ROOTS: List[str] = []   # Set lazily in discover_tools() to [ROOT_DIR] if empty.
-DISCOVERER: Optional[Callable] = None  # callable(root) -> List[(entry_point_path, category)].
-                                   # When None: the tools_* / main.py walk for a
-                                   # single ROOT_DIR, and the wider
-                                   # _walk_tools_discoverer once DISCOVERY_ROOTS
-                                   # is set.
-
-# GROUP_BY — which ToolEntry field labels the GUI's row bands. "capability" (the
-# default) clusters every agent, every tts, regardless of folder. "category" lets
-# a wrapper band by whatever label its discoverer assigned (tools/ computes a
-# semantic group from a committed JSON file). The same label is used for the
-# band headers, the search show/hide bookkeeping and expand/collapse.
-GROUP_BY: str = "capability"   # "capability" | "category"
-
-
-# PRE_DISCOVERY — optional callable(refresh: bool) -> None run once at the top of
-# discover_tools() BEFORE scanning, for side effects like cloning/pulling repos
-# into a cache (AutomatedAlchemy uses this to bootstrap repos.json checkouts).
-# It is skipped on the login-check path (discover_tools(run_pre=False)) so a
-# login hook can never touch the network. REFRESH_REPOS is the bool handed to it.
-PRE_DISCOVERY: Optional[Callable] = None
-REFRESH_REPOS = False
-
-# CHECK_RECONCILE_SHORTCUTS — login-check policy. When True (tools default) the
-# headless --check also network-free-reinstalls drifted shortcuts via the tool's
-# own --install (skip_deps). A tree whose --install has side effects unsafe for a
-# login hook (cron daemons, an interactive login, a ~/.bashrc function — as in
-# AutomatedAlchemy) sets this False to make --check skill-reconciliation ONLY.
-CHECK_RECONCILE_SHORTCUTS = True
-
-# The curses screen (tui_installer) that main() opens instead of tkinter on a
-# host without a display. SKILL_TARGETS lists where a skill can be registered
-# (None = the default ~/.claude/skills target only); TUI_PRESELECT controls
-# the initial ticks (None = tick everything on a host with nothing installed
-# yet, else mirror the host; True/False force one or the other).
-SKILL_TARGETS: Optional[List] = None
-TUI_PRESELECT: Optional[bool] = None
-
-# Identity of the login update-check artifacts. Distinct names let several
-# wrappers' autostart entries / logs / state files coexist on one host.
-AUTOSTART_CHECK_DESKTOP_NAME = IDENTITY.check_desktop
-CHECK_LOG_NAME = IDENTITY.check_log
-CHECK_STATE_NAME = IDENTITY.check_state
-
-# Identity of the manager's OWN desktop shortcut (cli_install_self) and GUI
-# window, so two installers' app entries / WM classes don't collide.
-SELF_DESKTOP_FILE = IDENTITY.self_desktop_file
-SELF_DESKTOP_NAME = IDENTITY.self_desktop_name
-SELF_DESKTOP_ICON = IDENTITY.icon  # icon name (freedesktop) or absolute path
-WM_CLASS = IDENTITY.self_wm_class
-NOTIFY_APP = IDENTITY.notify_label  # notify-send application label on the --check path
-
 
 def _skill_installed(skill_name: str) -> bool:
     """True if ~/.claude/skills/<skill_name>/SKILL.md exists."""
     if not skill_name:
         return False
-    return os.path.isfile(os.path.join(CLAUDE_SKILLS_DIR, skill_name, "SKILL.md"))
+    return os.path.isfile(os.path.join(state.CLAUDE_SKILLS_DIR, skill_name, "SKILL.md"))
 
 
 class ToolEntry(NamedTuple):
@@ -273,7 +173,7 @@ def _group_label(entry: "ToolEntry") -> str:
     Everything that keys on a band (the headers, expand/collapse, the search
     show/hide) must go through this, so all of them agree on one label.
     """
-    return getattr(entry, GROUP_BY, "") or entry.capability
+    return getattr(entry, state.GROUP_BY, "") or entry.capability
 
 
 class ToolGroup(NamedTuple):
@@ -299,15 +199,15 @@ def group_tools(tools: List[ToolEntry]) -> List[ToolGroup]:
 def load_config() -> dict:
     """Load config from file, return empty dict if not found."""
     try:
-        with open(CONFIG_FILE, "r") as f:
+        with open(state.CONFIG_FILE, "r") as f:
             return json.load(f)
     except (FileNotFoundError, json.JSONDecodeError):
         return {}
 
 def save_config(config: dict):
     """Save config to file."""
-    os.makedirs(CONFIG_DIR, exist_ok=True)
-    with open(CONFIG_FILE, "w") as f:
+    os.makedirs(state.CONFIG_DIR, exist_ok=True)
+    with open(state.CONFIG_FILE, "w") as f:
         json.dump(config, f)
 
 
@@ -471,7 +371,7 @@ EMOJI_LIST = _build_emoji_list()
 
 def _get_emoji_cache_dir():
     """Get/create emoji icon cache directory."""
-    cache_dir = os.path.join(IDENTITY.cache_path, "emoji_icons")
+    cache_dir = os.path.join(state.IDENTITY.cache_path, "emoji_icons")
     os.makedirs(cache_dir, exist_ok=True)
     return cache_dir
 
@@ -725,17 +625,6 @@ def _default_tools_discoverer(root: str) -> List[tuple]:
     return found
 
 
-# How deep below a discovery root a tool is still found, and the directory names
-# the walk never enters. `vendor*` catches vendored checkouts (vendor-G2).
-MAX_DISCOVERY_DEPTH = 4
-DISCOVERY_PRUNE = {".venv", "venv", ".git", "node_modules", "__pycache__",
-                   "out", "cache", "build", "dist", "archive"}
-
-# Names a wrapper adds to DISCOVERY_PRUNE for its own tree, via run(prune=...).
-# It extends the default set rather than replacing it.
-EXTRA_PRUNE: set = set()
-
-
 def _walk_entry_point(dirpath: str, filenames) -> Optional[str]:
     """The entry point of a tool directory, or None when it is not one.
 
@@ -754,7 +643,7 @@ def _walk_entry_point(dirpath: str, filenames) -> Optional[str]:
 
 def _walk_pruned(name: str) -> bool:
     return (name.startswith(".") or name.startswith("vendor")
-            or name in DISCOVERY_PRUNE or name in EXTRA_PRUNE)
+            or name in state.DISCOVERY_PRUNE or name in state.EXTRA_PRUNE)
 
 
 def _walk_category(root: str, tool_dir: str) -> str:
@@ -784,7 +673,7 @@ def _walk_tools_discoverer(root: str) -> List[tuple]:
         rel = os.path.relpath(dirpath, root)
         depth = 0 if rel == "." else rel.count(os.sep) + 1
         dirnames[:] = sorted(d for d in dirnames
-                             if not _walk_pruned(d) and depth < MAX_DISCOVERY_DEPTH)
+                             if not _walk_pruned(d) and depth < state.MAX_DISCOVERY_DEPTH)
         entry = _walk_entry_point(dirpath, filenames)
         if entry:
             found.append((entry, _walk_category(root, dirpath)))
@@ -802,14 +691,14 @@ def discover_tools(run_pre: bool = True) -> List[ToolEntry]:
     run_pre=False to skip it — the login-check path does this so a login hook
     can never reach the network.
     """
-    if run_pre and PRE_DISCOVERY is not None:
-        PRE_DISCOVERY(REFRESH_REPOS)
+    if run_pre and state.PRE_DISCOVERY is not None:
+        state.PRE_DISCOVERY(state.REFRESH_REPOS)
 
-    roots = DISCOVERY_ROOTS or [ROOT_DIR]
+    roots = state.DISCOVERY_ROOTS or [state.ROOT_DIR]
     # A single root_dir keeps the flat/tools_* layouts it has always used; the
     # category label of a tools_<cat>/ tree is only produced there. Several
     # roots mean repos of different shapes, so those get the wider walk.
-    discoverer = DISCOVERER or (_walk_tools_discoverer if DISCOVERY_ROOTS
+    discoverer = state.DISCOVERER or (_walk_tools_discoverer if state.DISCOVERY_ROOTS
                                 else _default_tools_discoverer)
 
     # Each tool is probed by spawning it with --advertise (a short-lived
@@ -844,80 +733,9 @@ def discover_tools(run_pre: bool = True) -> List[ToolEntry]:
             )
     return tools
 
-ALIASES_FILE = IDENTITY.aliases_path
-AUTOSTART_DIR = (host.startup_dir() if host.IS_WINDOWS
-                 else os.path.join(os.path.expanduser("~"), ".config", "autostart"))
-
-# --- Login update-check autostart -----------------------------------------
-# A startup entry (~/.config/autostart, or the Start Menu's Startup folder on
-# Windows) that runs `installer.py --check` once per login.
-# The check APPLIES network-free reconciliations (drifted .desktop Exec paths,
-# renamed aliases, stale installed SKILL.md — all rewritten from the source
-# already on disk via skip_deps, no pip) and only NOTIFIES for updates that would touch
-# the network (a new, not-yet-installed tool) or that add a new skill. The
-# pip/network gate stays behind an explicit human action.
-# Derived from the configurable *_NAME knobs above. run() recomputes these after
-# a wrapper overrides the names; the defaults keep tools/installer.py unchanged.
-
-
-def _autostart_check_path() -> str:
-    """Where the login-check entry goes, named the way the platform runs it.
-
-    Windows' Startup folder executes shortcuts, not XDG .desktop files, so the
-    name carries .lnk there and the entry is written as one.
-    """
-    name = AUTOSTART_CHECK_DESKTOP_NAME
-    if host.IS_WINDOWS:
-        name = os.path.splitext(name)[0] + ".lnk"
-    return os.path.join(AUTOSTART_DIR, name)
-
-
-AUTOSTART_CHECK_DESKTOP = _autostart_check_path()
-CHECK_LOG = os.path.join(os.path.expanduser("~"), ".local", "log", CHECK_LOG_NAME)
-# Remembers the last actionable (new tool / new skill / failure) set so the
-# login check notifies once when it CHANGES instead of nagging every login.
-CHECK_STATE = os.path.join(os.path.expanduser("~"), ".local", "state", CHECK_STATE_NAME)
-
-
-def _apply_identity(identity: InstallerIdentity) -> None:
-    """Point every per-host artifact at the given identity.
-
-    Called by run(identity=...) before the explicit name kwargs, so a wrapper
-    can take the whole namespace from a slug and still override one name.
-    """
-    global IDENTITY, CONFIG_DIR, CONFIG_FILE, CUSTOM_ICONS_DIR, ALIASES_FILE
-    global WINDOW_TITLE, SELF_DESKTOP_FILE, SELF_DESKTOP_NAME, SELF_DESKTOP_ICON
-    global WM_CLASS, NOTIFY_APP
-    global AUTOSTART_CHECK_DESKTOP_NAME, CHECK_LOG_NAME, CHECK_STATE_NAME
-
-    IDENTITY = identity
-    CONFIG_DIR = identity.config_path
-    CONFIG_FILE = identity.config_file
-    CUSTOM_ICONS_DIR = identity.icons_dir
-    ALIASES_FILE = identity.aliases_path
-    WINDOW_TITLE = identity.display_title
-    SELF_DESKTOP_FILE = identity.self_desktop_file
-    SELF_DESKTOP_NAME = identity.self_desktop_name
-    SELF_DESKTOP_ICON = identity.icon
-    WM_CLASS = identity.self_wm_class
-    NOTIFY_APP = identity.notify_label
-    AUTOSTART_CHECK_DESKTOP_NAME = identity.check_desktop
-    CHECK_LOG_NAME = identity.check_log
-    CHECK_STATE_NAME = identity.check_state
-    _recompute_check_paths()
-
-
-def _recompute_check_paths() -> None:
-    """Re-derive the login-check artifact paths from the *_NAME knobs (call after
-    a wrapper overrides them, e.g. inside run())."""
-    global AUTOSTART_CHECK_DESKTOP, CHECK_LOG, CHECK_STATE
-    AUTOSTART_CHECK_DESKTOP = _autostart_check_path()
-    CHECK_LOG = os.path.join(os.path.expanduser("~"), ".local", "log", CHECK_LOG_NAME)
-    CHECK_STATE = os.path.join(os.path.expanduser("~"), ".local", "state", CHECK_STATE_NAME)
-
 
 def _skill_md_path(skill_name: str) -> str:
-    return os.path.join(CLAUDE_SKILLS_DIR, skill_name, "SKILL.md")
+    return os.path.join(state.CLAUDE_SKILLS_DIR, skill_name, "SKILL.md")
 
 
 def _file_sig(path: str):
@@ -931,12 +749,12 @@ def _file_sig(path: str):
 
 
 def autostart_check_enabled() -> bool:
-    return os.path.exists(AUTOSTART_CHECK_DESKTOP)
+    return os.path.exists(state.AUTOSTART_CHECK_DESKTOP)
 
 
 def enable_autostart_check() -> str:
     """Write the login update-check autostart entry. Returns its path."""
-    os.makedirs(AUTOSTART_DIR, exist_ok=True)
+    os.makedirs(state.AUTOSTART_DIR, exist_ok=True)
 
     if host.IS_WINDOWS:
         # The Startup folder runs shortcuts; a .desktop file dropped there is
@@ -947,18 +765,18 @@ def enable_autostart_check() -> str:
         if os.path.exists(windowless):
             runner = windowless
         host.write_shortcut(
-            AUTOSTART_CHECK_DESKTOP,
+            state.AUTOSTART_CHECK_DESKTOP,
             target=runner,
-            args=f'"{ENTRY_SCRIPT}" --check',
-            workdir=os.path.dirname(ENTRY_SCRIPT),
+            args=f'"{state.ENTRY_SCRIPT}" --check',
+            workdir=os.path.dirname(state.ENTRY_SCRIPT),
         )
-        return AUTOSTART_CHECK_DESKTOP
+        return state.AUTOSTART_CHECK_DESKTOP
 
-    exec_line = f"{sys.executable} {ENTRY_SCRIPT} --check"
+    exec_line = f"{sys.executable} {state.ENTRY_SCRIPT} --check"
     content = (
         "[Desktop Entry]\n"
         "Type=Application\n"
-        f"Name={SELF_DESKTOP_NAME} — login update check\n"
+        f"Name={state.SELF_DESKTOP_NAME} — login update check\n"
         "Comment=Apply network-free tool reconciliations on login; notify for new tools\n"
         f"Exec={exec_line}\n"
         "Icon=system-software-update\n"
@@ -967,9 +785,9 @@ def enable_autostart_check() -> str:
         "X-KDE-autostart-after=panel\n"
         "X-GNOME-Autostart-enabled=true\n"
     )
-    with open(AUTOSTART_CHECK_DESKTOP, "w") as f:
+    with open(state.AUTOSTART_CHECK_DESKTOP, "w") as f:
         f.write(content)
-    return AUTOSTART_CHECK_DESKTOP
+    return state.AUTOSTART_CHECK_DESKTOP
 
 
 def disable_autostart_check() -> bool:
@@ -977,8 +795,8 @@ def disable_autostart_check() -> bool:
     removed = False
     # On Windows, also clear the .desktop an older version wrote into the
     # Startup folder, where it sat inert instead of running the check.
-    stale = os.path.join(AUTOSTART_DIR, AUTOSTART_CHECK_DESKTOP_NAME)
-    for path in {AUTOSTART_CHECK_DESKTOP, stale}:
+    stale = os.path.join(state.AUTOSTART_DIR, state.AUTOSTART_CHECK_DESKTOP_NAME)
+    for path in {state.AUTOSTART_CHECK_DESKTOP, stale}:
         if os.path.exists(path):
             os.remove(path)
             removed = True
@@ -991,7 +809,7 @@ def _notify_send(summary: str, body: str = "") -> None:
         return  # no notify-send here
     try:
         subprocess.run(
-            ["notify-send", "-a", NOTIFY_APP, "-i", "system-software-update",
+            ["notify-send", "-a", state.NOTIFY_APP, "-i", "system-software-update",
              "-t", "15000", summary] + ([body] if body else []),
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10,
         )
@@ -1000,21 +818,21 @@ def _notify_send(summary: str, body: str = "") -> None:
 
 
 def ensure_apps_dir():
-    if not os.path.exists(APPS_DIR):
-        os.makedirs(APPS_DIR)
+    if not os.path.exists(state.APPS_DIR):
+        os.makedirs(state.APPS_DIR)
 
 def tool_shortcut_path(tool: ToolEntry) -> str:
     """Where this tool's shortcut lives: a .desktop file, or a .lnk on Windows."""
     if host.IS_WINDOWS:
-        return os.path.join(APPS_DIR,
+        return os.path.join(state.APPS_DIR,
                             os.path.splitext(tool.desktop_file)[0] + ".lnk")
-    return os.path.join(APPS_DIR, tool.desktop_file)
+    return os.path.join(state.APPS_DIR, tool.desktop_file)
 
 
 def _load_shims() -> dict:
     """Windows equivalent of _load_aliases: the installed shims, read back as
     alias name -> command line, so the callers below need no Windows branch."""
-    shim_dir = IDENTITY.shim_path
+    shim_dir = state.IDENTITY.shim_path
     commands = {}
     try:
         names = os.listdir(shim_dir)
@@ -1041,8 +859,8 @@ def _load_aliases() -> dict:
     if host.IS_WINDOWS:
         return _load_shims()
     aliases = {}
-    if os.path.exists(ALIASES_FILE):
-        with open(ALIASES_FILE, "r") as f:
+    if os.path.exists(state.ALIASES_FILE):
+        with open(state.ALIASES_FILE, "r") as f:
             for line in f:
                 line = line.strip()
                 if line.startswith("alias ") and "=" in line:
@@ -1080,15 +898,15 @@ def _save_aliases(aliases: dict) -> None:
     remaining shims are written by each tool's own --install.
     """
     if host.IS_WINDOWS:
-        shim_dir = IDENTITY.shim_path
+        shim_dir = state.IDENTITY.shim_path
         for name in _load_shims():
             if name not in aliases:
                 host.remove_shims(shim_dir, name)
         return
-    with open(ALIASES_FILE, "w") as f:
+    with open(state.ALIASES_FILE, "w") as f:
         f.write("# Auto-generated by tools installer - do not edit manually\n")
         f.write("# Source this file in your .bashrc/.zshrc:\n")
-        f.write(f"#   [ -f {ALIASES_FILE} ] && source {ALIASES_FILE}\n\n")
+        f.write(f"#   [ -f {state.ALIASES_FILE} ] && source {state.ALIASES_FILE}\n\n")
         for name, cmd in sorted(aliases.items()):
             # shlex.quote so an inner quote (e.g. the `"` around the script
             # path) survives the round-trip instead of being written into a
@@ -1116,7 +934,7 @@ def needs_update(tool: ToolEntry) -> bool:
         if host.IS_WINDOWS:
             return False  # a .lnk is binary; nothing to compare the path against
         # For desktop files, check if the Exec path matches the current script path
-        desktop_path = os.path.join(APPS_DIR, tool.desktop_file)
+        desktop_path = os.path.join(state.APPS_DIR, tool.desktop_file)
         if not os.path.exists(desktop_path):
             return False
         # Parse the desktop file to check if Exec path matches
@@ -1159,7 +977,7 @@ def install_tool(tool: ToolEntry, skip_deps: bool = False) -> tuple[bool, str]:
         # needs to know which installer asked — otherwise a third-party org's
         # tools get branded with the first-party marker and land in the
         # first-party alias file.
-        env.update(IDENTITY.env())
+        env.update(state.IDENTITY.env())
         if skip_deps:
             env["TOOLS_INSTALLER_SKIP_DEPS"] = "1"
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
@@ -1178,7 +996,7 @@ def remove_tool(tool: ToolEntry) -> tuple[bool, str]:
     try:
         cmd = [sys.executable, tool.script_path, "--remove"] + tool.args
         env = os.environ.copy()
-        env.update(IDENTITY.env())   # remove the alias from OUR alias file
+        env.update(state.IDENTITY.env())   # remove the alias from OUR alias file
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
                                 capture_output=True, encoding="utf-8", errors="replace",
                                 env=host.child_env(env))
@@ -1259,7 +1077,7 @@ def refresh_desktop_database():
         return
     for cmd in ["update-desktop-database", "kbuildsycoca5"]:
         try:
-            subprocess.run([cmd, APPS_DIR if cmd == "update-desktop-database" else ""],
+            subprocess.run([cmd, state.APPS_DIR if cmd == "update-desktop-database" else ""],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         except:
             pass
@@ -1304,14 +1122,14 @@ def find_orphan_desktop_files() -> List[OrphanDesktopFile]:
     """
     orphans = []
 
-    if not os.path.exists(APPS_DIR):
+    if not os.path.exists(state.APPS_DIR):
         return orphans
 
-    for filename in os.listdir(APPS_DIR):
+    for filename in os.listdir(state.APPS_DIR):
         if not filename.endswith('.desktop'):
             continue
 
-        desktop_path = os.path.join(APPS_DIR, filename)
+        desktop_path = os.path.join(state.APPS_DIR, filename)
         tool_path = None
         exec_line = None
         is_ours = False
@@ -1322,7 +1140,7 @@ def find_orphan_desktop_files() -> List[OrphanDesktopFile]:
             with open(desktop_path, 'r') as f:
                 for line in f:
                     line = line.strip()
-                    if 'Keywords=' in line and IDENTITY.marker_token in line and 'ai' in line and 'tool' in line:
+                    if 'Keywords=' in line and state.IDENTITY.marker_token in line and 'ai' in line and 'tool' in line:
                         is_ours = True
                         if 'installer-self' in line:
                             is_installer_self = True
@@ -1341,7 +1159,7 @@ def find_orphan_desktop_files() -> List[OrphanDesktopFile]:
         # Skip any installer's own desktop file — this instance's (by
         # filename, for shortcuts written before the marker existed) and
         # every other installer's (by the 'installer-self' marker).
-        if filename == SELF_DESKTOP_FILE or is_installer_self:
+        if filename == state.SELF_DESKTOP_FILE or is_installer_self:
             continue
 
         # If no Path=, try to extract script path from Exec= line
@@ -1376,7 +1194,7 @@ def find_orphan_aliases() -> List[OrphanAlias]:
     """
     orphans = []
 
-    if not host.IS_WINDOWS and not os.path.exists(ALIASES_FILE):
+    if not host.IS_WINDOWS and not os.path.exists(state.ALIASES_FILE):
         return orphans
 
     aliases = _load_aliases()
@@ -1448,9 +1266,9 @@ def get_autostart_path(tool: ToolEntry) -> str:
     """Where a tool's autostart entry lives: a .desktop symlink in
     ~/.config/autostart, or a copy of its .lnk in the Startup folder."""
     if host.IS_WINDOWS:
-        return os.path.join(AUTOSTART_DIR,
+        return os.path.join(state.AUTOSTART_DIR,
                             os.path.splitext(tool.desktop_file)[0] + ".lnk")
-    return os.path.join(AUTOSTART_DIR, tool.desktop_file)
+    return os.path.join(state.AUTOSTART_DIR, tool.desktop_file)
 
 
 def _cron_line_for_tool(tool: ToolEntry) -> str:
@@ -1487,7 +1305,7 @@ def autostart_tool_key(tool: ToolEntry) -> str:
 
 def get_autostart_conditions(tool: ToolEntry) -> dict:
     """The conditions currently configured for *tool* on this host."""
-    return load_tool_conditions(IDENTITY.slug, autostart_tool_key(tool))
+    return load_tool_conditions(state.IDENTITY.slug, autostart_tool_key(tool))
 
 
 def set_autostart_conditions(tool: ToolEntry, conditions: Optional[dict]) -> None:
@@ -1496,7 +1314,7 @@ def set_autostart_conditions(tool: ToolEntry, conditions: Optional[dict]) -> Non
     The Exec line differs between a gated and an ungated entry, so a change
     here only takes effect once the entry is rewritten.
     """
-    save_tool_conditions(IDENTITY.slug, autostart_tool_key(tool), conditions)
+    save_tool_conditions(state.IDENTITY.slug, autostart_tool_key(tool), conditions)
     if is_autostart_enabled(tool):
         enable_autostart(tool)
 
@@ -1526,7 +1344,7 @@ def _write_gated_autostart(tool: ToolEntry, desktop_path: str,
         return False, f"No Exec line in {desktop_path}"
 
     prefix = " ".join(shlex.quote(p) for p in
-                      build_exec_prefix(IDENTITY.slug, autostart_tool_key(tool)))
+                      build_exec_prefix(state.IDENTITY.slug, autostart_tool_key(tool)))
     gated_exec = f"{prefix} {exec_line}"
 
     try:
@@ -1573,10 +1391,10 @@ def enable_autostart(tool: ToolEntry) -> tuple[bool, str]:
     if "Icon" in tool.tags:
         if host.IS_WINDOWS:
             stem = os.path.splitext(tool.desktop_file)[0]
-            lnk_path = os.path.join(APPS_DIR, stem + ".lnk")
+            lnk_path = os.path.join(state.APPS_DIR, stem + ".lnk")
             if not os.path.exists(lnk_path):
                 return False, f"Shortcut not found: {lnk_path}"
-            os.makedirs(AUTOSTART_DIR, exist_ok=True)
+            os.makedirs(state.AUTOSTART_DIR, exist_ok=True)
             try:
                 import shutil
                 shutil.copyfile(lnk_path, get_autostart_path(tool))
@@ -1584,11 +1402,11 @@ def enable_autostart(tool: ToolEntry) -> tuple[bool, str]:
             except OSError as e:
                 return False, f"Failed to copy shortcut: {e}"
 
-        desktop_path = os.path.join(APPS_DIR, tool.desktop_file)
+        desktop_path = os.path.join(state.APPS_DIR, tool.desktop_file)
         if not os.path.exists(desktop_path):
             return False, f"Desktop file not found: {desktop_path}"
 
-        os.makedirs(AUTOSTART_DIR, exist_ok=True)
+        os.makedirs(state.AUTOSTART_DIR, exist_ok=True)
         autostart_path = get_autostart_path(tool)
 
         # A tool with conditions configured gets a gated copy instead of the
@@ -1978,7 +1796,7 @@ class InstallerApp:
         self.root = root
         self.root.withdraw()  # Hide until properly sized
         self.tools = tools
-        self.root.title(WINDOW_TITLE)
+        self.root.title(state.WINDOW_TITLE)
         self._set_window_icon()
         saved_theme = load_config().get("theme", "ocean")
         self.current_theme = saved_theme if saved_theme in self.THEMES else "ocean"
@@ -2036,7 +1854,7 @@ class InstallerApp:
         icon instead. Only an absolute image path can be used here (a
         freedesktop icon *name* has no file to load without a theme lookup).
         """
-        icon_path = SELF_DESKTOP_ICON
+        icon_path = state.SELF_DESKTOP_ICON
         if not icon_path or not os.path.isabs(icon_path) or not os.path.isfile(icon_path):
             return
         try:
@@ -2463,7 +2281,7 @@ class InstallerApp:
         title_frame = ttk.Frame(main_container)
         title_frame.grid(row=0, column=0, pady=(0, 10), sticky="ew")
 
-        ttk.Label(title_frame, text=WINDOW_TITLE, style="Title.TLabel").pack(side="left")
+        ttk.Label(title_frame, text=state.WINDOW_TITLE, style="Title.TLabel").pack(side="left")
         self.tools_count_label = ttk.Label(title_frame, text=f"({len(self.tools)} tools found)", style="Muted.TLabel")
         self.tools_count_label.pack(side="left", padx=10, pady=(10, 0))
 
@@ -2711,8 +2529,8 @@ class InstallerApp:
             "stale installed skills — rewritten from the tool's source on disk, "
             "never pip) and only notifies for updates that need the network (a new, "
             "not-yet-installed tool).\n\n"
-            f"Entry: {AUTOSTART_CHECK_DESKTOP}\n"
-            f"Log: {CHECK_LOG}")
+            f"Entry: {state.AUTOSTART_CHECK_DESKTOP}\n"
+            f"Log: {state.CHECK_LOG}")
 
         # "Reinstall deps" is the deliberate, network-touching pip action — kept in
         # its own group (own separator) so it reads as distinct from the local badge.
@@ -3087,7 +2905,7 @@ class InstallerApp:
         dialog._photos = []  # Keep references to prevent GC
 
         # Find available models
-        models_dir = os.path.join(ROOT_DIR, "tools_personal", "diffusers_gui", "models")
+        models_dir = os.path.join(state.ROOT_DIR, "tools_personal", "diffusers_gui", "models")
         available_models = []
         if os.path.exists(models_dir):
             available_models = [f for f in os.listdir(models_dir) if f.endswith('.safetensors')]
@@ -3364,7 +3182,7 @@ class InstallerApp:
             # Save settings before generating
             save_current_settings()
 
-            diffusers = os.path.join(ROOT_DIR, "tools_personal", "diffusers_gui", "main.py")
+            diffusers = os.path.join(state.ROOT_DIR, "tools_personal", "diffusers_gui", "main.py")
             if not os.path.exists(diffusers):
                 status_var.set("Error: Diffusers not found")
                 return
@@ -3382,7 +3200,7 @@ class InstallerApp:
                 status_var.set("No models available")
                 return
 
-            os.makedirs(CUSTOM_ICONS_DIR, exist_ok=True)
+            os.makedirs(state.CUSTOM_ICONS_DIR, exist_ok=True)
             import time
             import tempfile
 
@@ -3420,7 +3238,7 @@ class InstallerApp:
                 model_path = os.path.join(models_dir, model_name)
 
                 timestamp = int(time.time() * 1000)
-                out = os.path.join(CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_{timestamp}.png")
+                out = os.path.join(state.CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_{timestamp}.png")
                 preview_file = os.path.join(tempfile.gettempdir(), f"icon_preview_{timestamp}.png")
 
                 short_model = model_name[:20] + "..." if len(model_name) > 23 else model_name.replace('.safetensors', '')
@@ -3495,7 +3313,7 @@ class InstallerApp:
                         if was_interrupted and os.path.exists(preview_file):
                             # Save the preview as a partial result
                             import shutil
-                            partial_out = os.path.join(CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_{timestamp}_partial.png")
+                            partial_out = os.path.join(state.CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_{timestamp}_partial.png")
                             try:
                                 shutil.copy2(preview_file, partial_out)
                                 generated_images.append(partial_out)
@@ -3703,7 +3521,7 @@ class InstallerApp:
                 status_var.set("No models available")
                 return
 
-            diffusers = os.path.join(ROOT_DIR, "tools_personal", "diffusers_gui", "main.py")
+            diffusers = os.path.join(state.ROOT_DIR, "tools_personal", "diffusers_gui", "main.py")
             if not os.path.exists(diffusers):
                 status_var.set("Error: Diffusers not found")
                 return
@@ -3712,7 +3530,7 @@ class InstallerApp:
             # Generate for each model × variation combination
             total_images = len(prompt_variations) * len(selected_models)
 
-            os.makedirs(CUSTOM_ICONS_DIR, exist_ok=True)
+            os.makedirs(state.CUSTOM_ICONS_DIR, exist_ok=True)
             import time
             import tempfile
 
@@ -3751,7 +3569,7 @@ class InstallerApp:
 
                 model_name, model_path, variation_prompt = generation_queue[idx]
                 timestamp = int(time.time() * 1000)
-                out = os.path.join(CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_{timestamp}.png")
+                out = os.path.join(state.CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_{timestamp}.png")
                 preview_file = os.path.join(tempfile.gettempdir(), f"icon_preview_{timestamp}.png")
 
                 short_model = model_name[:20] + "..." if len(model_name) > 23 else model_name.replace('.safetensors', '')
@@ -3853,8 +3671,8 @@ class InstallerApp:
             if path:
                 import shutil
                 save_current_settings()
-                os.makedirs(CUSTOM_ICONS_DIR, exist_ok=True)
-                dest = os.path.join(CUSTOM_ICONS_DIR,
+                os.makedirs(state.CUSTOM_ICONS_DIR, exist_ok=True)
+                dest = os.path.join(state.CUSTOM_ICONS_DIR,
                                     f"{tool_key.replace(' ', '_').lower()}{os.path.splitext(path)[1]}")
                 shutil.copy2(path, dest)
                 set_custom_icon(tool_key, dest)
@@ -3884,9 +3702,9 @@ class InstallerApp:
             if browser_loaded[0] and icon_thread_pool[0]:
                 display_generation[0] += 1
                 icon_thread_pool[0].shutdown(wait=False)
-            os.makedirs(CUSTOM_ICONS_DIR, exist_ok=True)
+            os.makedirs(state.CUSTOM_ICONS_DIR, exist_ok=True)
             ext = os.path.splitext(icon_path)[1]
-            dest = os.path.join(CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_icon{ext}")
+            dest = os.path.join(state.CUSTOM_ICONS_DIR, f"{tool_key.replace(' ', '_').lower()}_icon{ext}")
             shutil.copy2(icon_path, dest)
             set_custom_icon(tool_key, dest)
             self._refresh_tool_icon(tool_key)
@@ -4810,18 +4628,18 @@ class InstallerApp:
         for o in self.orphan_aliases:
             items.append({"name": o.name,
                           "detail": f"orphaned alias → missing {o.script_path}",
-                          "since": mtime(ALIASES_FILE)})
+                          "since": mtime(state.ALIASES_FILE)})
         # Installed tools whose shortcut drifted from advertised metadata.
         for t in self.tools:
             if not (is_installed(t) and needs_update(t)):
                 continue
             if "Icon" in t.tags:
                 detail = "shortcut path changed (tool moved/renamed)"
-                since = mtime(os.path.join(APPS_DIR, t.desktop_file))
+                since = mtime(os.path.join(state.APPS_DIR, t.desktop_file))
             else:
                 old = _find_alias_for_script(t.script_path)
                 detail = f"alias renamed: '{old}' → '{t.alias}'"
-                since = mtime(ALIASES_FILE)
+                since = mtime(state.ALIASES_FILE)
             items.append({"name": t.name, "detail": detail, "since": since})
         return items
 
@@ -5842,10 +5660,10 @@ def _self_shortcut_path() -> str:
     """
     if host.IS_WINDOWS:
         stem = "".join(" " if c in '<>:"/\\|?*' else c
-                       for c in SELF_DESKTOP_NAME).strip(" .")
-        stem = " ".join(stem.split()) or os.path.splitext(SELF_DESKTOP_FILE)[0]
-        return os.path.join(APPS_DIR, stem + ".lnk")
-    return os.path.join(APPS_DIR, SELF_DESKTOP_FILE)
+                       for c in state.SELF_DESKTOP_NAME).strip(" .")
+        stem = " ".join(stem.split()) or os.path.splitext(state.SELF_DESKTOP_FILE)[0]
+        return os.path.join(state.APPS_DIR, stem + ".lnk")
+    return os.path.join(state.APPS_DIR, state.SELF_DESKTOP_FILE)
 
 
 def _windows_icon(icon: str) -> Optional[str]:
@@ -5869,18 +5687,18 @@ def cli_install_self(quiet: bool = False) -> tuple[bool, str]:
     try:
         ensure_apps_dir()
         python_exec = sys.executable
-        script_path = ENTRY_SCRIPT
+        script_path = state.ENTRY_SCRIPT
         if host.IS_WINDOWS:
             lnk_path = _self_shortcut_path()
             ok = host.write_shortcut(lnk_path, python_exec, f'"{script_path}"',
-                                     icon=_windows_icon(SELF_DESKTOP_ICON),
-                                     workdir=ROOT_DIR)
+                                     icon=_windows_icon(state.SELF_DESKTOP_ICON),
+                                     workdir=state.ROOT_DIR)
             if not ok:
                 return False, f"Could not write {lnk_path}"
             # Before 0.6.4 the .lnk was named after the desktop file's stem.
             # Drop that one, or the Start Menu keeps both.
-            legacy = os.path.join(APPS_DIR,
-                                  os.path.splitext(SELF_DESKTOP_FILE)[0] + ".lnk")
+            legacy = os.path.join(state.APPS_DIR,
+                                  os.path.splitext(state.SELF_DESKTOP_FILE)[0] + ".lnk")
             if legacy != lnk_path and os.path.isfile(legacy):
                 try:
                     os.remove(legacy)
@@ -5889,20 +5707,20 @@ def cli_install_self(quiet: bool = False) -> tuple[bool, str]:
             if not quiet:
                 print(f"Installed: {lnk_path}")
             return True, lnk_path
-        desktop_path = os.path.join(APPS_DIR, SELF_DESKTOP_FILE)
+        desktop_path = os.path.join(state.APPS_DIR, state.SELF_DESKTOP_FILE)
 
         content = f"""[Desktop Entry]
 Type=Application
-Name={SELF_DESKTOP_NAME}
+Name={state.SELF_DESKTOP_NAME}
 Comment=Install and manage tool shortcuts
 Exec={python_exec} "{script_path}"
-Path={ROOT_DIR}
-Icon={SELF_DESKTOP_ICON}
+Path={state.ROOT_DIR}
+Icon={state.SELF_DESKTOP_ICON}
 Terminal=false
 Categories=Settings;Utility;
-Keywords={IDENTITY.marker_token};ai;tool;installer-self;
+Keywords={state.IDENTITY.marker_token};ai;tool;installer-self;
 StartupNotify=true
-StartupWMClass={WM_CLASS}
+StartupWMClass={state.WM_CLASS}
 """
         with open(desktop_path, "w") as f: f.write(content)
         # Non-executable on purpose — see ToolInstaller._install_shortcut.
@@ -6106,7 +5924,7 @@ def cli_check() -> int:
         # run_pre=False: a login hook must never reach the network (no repo clone).
         tools = discover_tools(run_pre=False)
     except Exception as e:
-        _notify_send(f"{NOTIFY_APP}: check failed", str(e))
+        _notify_send(f"{state.NOTIFY_APP}: check failed", str(e))
         return 0
 
     applied: list[str] = []      # silently reconciled "<tool>: <what>"
@@ -6122,7 +5940,7 @@ def cli_check() -> int:
         #     persistent/unresolvable mismatch can't be reported every login.
         #     Skipped entirely when CHECK_RECONCILE_SHORTCUTS is False (a tree
         #     whose --install has login-unsafe side effects, e.g. AutomatedAlchemy).
-        if CHECK_RECONCILE_SHORTCUTS and shortcut_installed and needs_update(t):
+        if state.CHECK_RECONCILE_SHORTCUTS and shortcut_installed and needs_update(t):
             ok, out = install_tool(t, skip_deps=True)
             if not ok:
                 failed.append(f"{t.name}: shortcut ({(out.splitlines() or ['failed'])[-1]})")
@@ -6161,8 +5979,8 @@ def cli_check() -> int:
     for n in new_tools:  lines.append(f"  new tool  {n}")
     for s in new_skills: lines.append(f"  new skill {s}")
     try:
-        os.makedirs(os.path.dirname(CHECK_LOG), exist_ok=True)
-        with open(CHECK_LOG, "a") as fh:
+        os.makedirs(os.path.dirname(state.CHECK_LOG), exist_ok=True)
+        with open(state.CHECK_LOG, "a") as fh:
             fh.write("\n".join(lines) + "\n")
     except OSError:
         pass
@@ -6173,13 +5991,13 @@ def cli_check() -> int:
                   + ["skill:" + s for s in sorted(new_skills)]
                   + ["fail:" + f for f in sorted(failed)])
     try:
-        with open(CHECK_STATE) as fh:
+        with open(state.CHECK_STATE) as fh:
             prev = json.load(fh).get("actionable", [])
     except (OSError, ValueError):
         prev = []
     try:
-        os.makedirs(os.path.dirname(CHECK_STATE), exist_ok=True)
-        with open(CHECK_STATE, "w") as fh:
+        os.makedirs(os.path.dirname(state.CHECK_STATE), exist_ok=True)
+        with open(state.CHECK_STATE, "w") as fh:
             json.dump({"actionable": actionable, "ts": ts}, fh)
     except OSError:
         pass
@@ -6195,7 +6013,7 @@ def cli_check() -> int:
             body.append("New tool(s) to review: " + ", ".join(new_tools[:6]) + more)
         if failed:
             body.append("Failed: " + ", ".join(failed[:4]))
-        _notify_send(f"{NOTIFY_APP}: updates available", "\n".join(body))
+        _notify_send(f"{state.NOTIFY_APP}: updates available", "\n".join(body))
 
     return 0
 
@@ -6234,8 +6052,7 @@ def main():
     args = parser.parse_args()
 
     if args.refresh:
-        global REFRESH_REPOS
-        REFRESH_REPOS = True
+        state.REFRESH_REPOS = True
 
     if args.check:
         sys.exit(cli_check())
@@ -6243,7 +6060,7 @@ def main():
     if args.enable_autostart_check:
         path = enable_autostart_check()
         print(f"{host.symbol('✓', 'OK')} Login update check enabled: {path}")
-        print(f"  Runs: {sys.executable} {ENTRY_SCRIPT} --check")
+        print(f"  Runs: {sys.executable} {state.ENTRY_SCRIPT} --check")
         return
 
     if args.disable_autostart_check:
@@ -6276,7 +6093,7 @@ def main():
     if args.apply:
         from . import tui_installer
         sys.exit(tui_installer.apply_headless(tools, args.apply, args.skill_target,
-                                              targets=SKILL_TARGETS))
+                                              targets=state.SKILL_TARGETS))
 
     if args.list:
         print(f"\nDiscovered {len(tools)} tools:\n" + "="*60)
@@ -6300,8 +6117,8 @@ def main():
 
     from . import tui_installer
     if tui_installer.prefer_tui(force_tui=args.tui, force_gui=args.gui, have_tk=_HAVE_TK):
-        sys.exit(tui_installer.run_tui(tools, targets=SKILL_TARGETS,
-                                       preselect=TUI_PRESELECT, title=WINDOW_TITLE))
+        sys.exit(tui_installer.run_tui(tools, targets=state.SKILL_TARGETS,
+                                       preselect=state.TUI_PRESELECT, title=state.WINDOW_TITLE))
     if not _HAVE_TK:
         if host.IS_WINDOWS:
             sys.exit("tkinter is not available in this Python; use --tui for "
@@ -6309,7 +6126,7 @@ def main():
         sys.exit("tkinter is not installed (Debian/Ubuntu: apt install python3-tk); "
                  "use --tui for the text screen.")
 
-    root = tk.Tk(className=WM_CLASS)
+    root = tk.Tk(className=state.WM_CLASS)
     InstallerApp(root, tools)
     root.mainloop()
 
@@ -6352,16 +6169,11 @@ def run(*, identity: Optional[InstallerIdentity] = None,
     Standalone use (the ``cli-tool-installer`` console script) calls this with no
     args; root_dir then defaults to the current working directory.
     """
-    global ROOT_DIR, ENTRY_SCRIPT, WINDOW_TITLE, DISCOVERY_ROOTS, DISCOVERER, GROUP_BY
-    global EXTRA_PRUNE
-    global PRE_DISCOVERY, CHECK_RECONCILE_SHORTCUTS, SKILL_TARGETS, TUI_PRESELECT
-    global AUTOSTART_CHECK_DESKTOP_NAME, CHECK_LOG_NAME, CHECK_STATE_NAME
-    global SELF_DESKTOP_FILE, SELF_DESKTOP_NAME, SELF_DESKTOP_ICON, WM_CLASS, NOTIFY_APP
 
     # Identity first: it sets the whole namespace, and the individual name
     # kwargs below still win so a wrapper can override one of them.
     if identity is not None:
-        _apply_identity(identity)
+        state._apply_identity(identity)
     elif entry_script is None and os.environ.get(InstallerIdentity.ENV_VAR, "") == "":
         # Bare engine: no identity, no wrapper pointing at itself. Opening the
         # GUI here would claim the first-party names on this host, so offer
@@ -6370,52 +6182,92 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         from .onboarding import print_onboarding
         raise SystemExit(print_onboarding(root_dir if root_dir is not None else os.getcwd()))
 
-    ROOT_DIR = root_dir if root_dir is not None else os.getcwd()
+    state.ROOT_DIR = root_dir if root_dir is not None else os.getcwd()
     if entry_script is not None:
-        ENTRY_SCRIPT = os.path.abspath(entry_script)
+        state.ENTRY_SCRIPT = os.path.abspath(entry_script)
     if window_title is not None:
-        WINDOW_TITLE = window_title
+        state.WINDOW_TITLE = window_title
     if discovery_roots is not None:
-        DISCOVERY_ROOTS = discovery_roots
+        state.DISCOVERY_ROOTS = discovery_roots
     if discoverer is not None:
-        DISCOVERER = discoverer
+        state.DISCOVERER = discoverer
     if prune is not None:
-        EXTRA_PRUNE = set(prune)
+        state.EXTRA_PRUNE = set(prune)
     if group_by is not None:
         if group_by not in ("capability", "category"):
             raise ValueError(
                 f"group_by must be 'capability' or 'category', got {group_by!r}")
-        GROUP_BY = group_by
+        state.GROUP_BY = group_by
     if pre_discovery is not None:
-        PRE_DISCOVERY = pre_discovery
+        state.PRE_DISCOVERY = pre_discovery
     if check_reconcile_shortcuts is not None:
-        CHECK_RECONCILE_SHORTCUTS = check_reconcile_shortcuts
+        state.CHECK_RECONCILE_SHORTCUTS = check_reconcile_shortcuts
     if skill_targets is not None:
-        SKILL_TARGETS = list(skill_targets)
+        state.SKILL_TARGETS = list(skill_targets)
     if tui_preselect is not None:
-        TUI_PRESELECT = tui_preselect
+        state.TUI_PRESELECT = tui_preselect
     if autostart_check_desktop_name is not None:
-        AUTOSTART_CHECK_DESKTOP_NAME = autostart_check_desktop_name
+        state.AUTOSTART_CHECK_DESKTOP_NAME = autostart_check_desktop_name
     if check_log_name is not None:
-        CHECK_LOG_NAME = check_log_name
+        state.CHECK_LOG_NAME = check_log_name
     if check_state_name is not None:
-        CHECK_STATE_NAME = check_state_name
+        state.CHECK_STATE_NAME = check_state_name
     if self_desktop_file is not None:
-        SELF_DESKTOP_FILE = self_desktop_file
+        state.SELF_DESKTOP_FILE = self_desktop_file
     if self_desktop_name is not None:
-        SELF_DESKTOP_NAME = self_desktop_name
+        state.SELF_DESKTOP_NAME = self_desktop_name
     if self_desktop_icon is not None:
-        SELF_DESKTOP_ICON = self_desktop_icon
+        state.SELF_DESKTOP_ICON = self_desktop_icon
     if wm_class is not None:
-        WM_CLASS = wm_class
+        state.WM_CLASS = wm_class
     if notify_app is not None:
-        NOTIFY_APP = notify_app
+        state.NOTIFY_APP = notify_app
     if hooks is not None:
         _apply_hooks(hooks)
 
-    _load_env()                 # re-read ROOT_DIR/.env now that ROOT_DIR is final
-    _recompute_check_paths()    # re-derive login-check artifact paths from the names
+    state._load_env()                 # re-read ROOT_DIR/.env now that ROOT_DIR is final
+    state._recompute_check_paths()    # re-derive login-check artifact paths from the names
     main()
+
+
+# The engine used to be this one module, and wrappers read and assign its
+# globals (gi.IDENTITY, gi.install_tool = ...). Those names now live in the
+# modules below. Reading, assigning or deleting one through gui_installer goes
+# to the module that holds it, where every screen looks it up at call time.
+_ENGINE_MODULES = (state,)
+
+
+def _home_of(name: str):
+    if not name.startswith("__"):
+        for module in _ENGINE_MODULES:
+            if name in module.__dict__:
+                return module
+    return None
+
+
+class _EngineModule(type(sys)):
+    def __getattr__(self, name):
+        home = _home_of(name)
+        if home is None:
+            raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+        return getattr(home, name)
+
+    def __setattr__(self, name, value):
+        home = None if name in self.__dict__ else _home_of(name)
+        if home is None:
+            super().__setattr__(name, value)
+        else:
+            setattr(home, name, value)
+
+    def __delattr__(self, name):
+        home = None if name in self.__dict__ else _home_of(name)
+        if home is None:
+            super().__delattr__(name)
+        else:
+            delattr(home, name)
+
+
+sys.modules[__name__].__class__ = _EngineModule
 
 
 if __name__ == "__main__":

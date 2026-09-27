@@ -14,16 +14,6 @@ from cli_tools_kit import InstallerIdentity
 EXAMPLE = Path(__file__).resolve().parent.parent / "examples" / "org-installer"
 
 
-@pytest.fixture
-def engine_state():
-    """run() rebinds module globals; put every one of them back afterwards."""
-    saved = dict(gi.__dict__)
-    yield
-    for name in set(gi.__dict__) - set(saved):
-        delattr(gi, name)
-    gi.__dict__.update(saved)
-
-
 def test_apply_goes_through_the_hooks(sandbox_home: Path, tmp_path: Path,
                                       monkeypatch: pytest.MonkeyPatch, engine_state) -> None:
     tree = tmp_path / "org"

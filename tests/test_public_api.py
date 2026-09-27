@@ -105,3 +105,13 @@ def installer_help() -> str:
                             timeout=60)
     assert result.returncode == 0, result.stderr
     return result.stdout
+
+
+def test_the_engine_globals_are_reachable_through_gui_installer(engine_state) -> None:
+    """The names moved out of gui_installer still read and assign through it."""
+    for module in gui_installer._ENGINE_MODULES:
+        for name, value in list(vars(module).items()):
+            if name.isupper() and not name.startswith("_"):
+                assert getattr(gui_installer, name) is value, name
+                setattr(gui_installer, name, "sentinel")
+                assert getattr(module, name) == "sentinel", name

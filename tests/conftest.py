@@ -137,7 +137,21 @@ def fake_tree(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def engine(sandbox_home: Path, fake_tree: Path, monkeypatch: pytest.MonkeyPatch):
+def engine_state():
+    """run() and the tests rebind the engine's module globals; put them back."""
+    import cli_tools_kit.gui_installer as gi
+
+    modules = (gi, *gi._ENGINE_MODULES)
+    saved = [dict(m.__dict__) for m in modules]
+    yield
+    for module, before in zip(modules, saved):
+        for name in set(module.__dict__) - set(before):
+            del module.__dict__[name]
+        module.__dict__.update(before)
+
+
+@pytest.fixture
+def engine(sandbox_home: Path, fake_tree: Path, monkeypatch: pytest.MonkeyPatch, engine_state):
     """gui_installer pointed at the sandbox and the fake tree, restored afterwards.
 
     Some of the engine's paths are fixed when the module is imported, so they
@@ -146,7 +160,6 @@ def engine(sandbox_home: Path, fake_tree: Path, monkeypatch: pytest.MonkeyPatch)
     import cli_tools_kit.gui_installer as gi
     from cli_tools_kit import InstallerIdentity, host
 
-    saved = dict(gi.__dict__)
     monkeypatch.setenv("TOOLS_INSTALLER_SKIP_DEPS", "1")
     gi._apply_identity(InstallerIdentity(slug="acme-tools", title="Acme Tools"))
     if host.IS_WINDOWS:
@@ -160,6 +173,3 @@ def engine(sandbox_home: Path, fake_tree: Path, monkeypatch: pytest.MonkeyPatch)
     gi.DISCOVERY_ROOTS = []
     gi.DISCOVERER = None
     yield gi
-    for name in set(gi.__dict__) - set(saved):
-        delattr(gi, name)
-    gi.__dict__.update(saved)
