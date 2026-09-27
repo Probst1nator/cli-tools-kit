@@ -294,5 +294,5 @@ def refresh_desktop_database():
         try:
             subprocess.run([cmd, state.APPS_DIR if cmd == "update-desktop-database" else ""],
                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        except:
-            pass
+        except OSError:
+            pass  # not installed on this desktop
