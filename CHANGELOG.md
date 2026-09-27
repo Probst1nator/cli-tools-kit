@@ -21,6 +21,8 @@ Stability for what counts as the public surface.
   3.13, a GUI smoke test under xvfb, and an install from the built wheel.
 
 ### Fixed
+- Enabling a cron autostart while `crontab -l` failed (permissions, a locked
+  spool) replaced the whole crontab with that one line. It now fails instead.
 - Windows: `--list` crashed with UnicodeEncodeError once a tool was installed,
   whenever its output went to a pipe or a file (cp1252 has no ✓). It now prints
   `[x]` there, and `[✓]` where the output can carry it.
