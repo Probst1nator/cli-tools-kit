@@ -7,6 +7,11 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.0.0] - 2026-09-27
+
+The first stable release. From here the public surface in README § Stability
+follows Semantic Versioning, so consumers pin `cli-tools-kit>=1.0,<2`.
+
 ### Added
 - `run(hooks=InstallHooks(...))`, also through `sources.run_installer`: the
   supported way for a wrapper to replace how one tool is installed, removed or
