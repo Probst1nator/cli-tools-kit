@@ -66,7 +66,7 @@ jobs:
           fi
       - run: |
           "$PY" -m pip install "$(ls dist/*.whl)[gui]"
-          "$PY" -c "import cli_tools_kit, cli_tools_kit.gui_installer, cli_tools_kit.sources, cli_tools_kit.venvs; print(cli_tools_kit.__version__)"
+          "$PY" -c "import cli_tools_kit, cli_tools_kit.gui_installer, cli_tools_kit.sources, cli_tools_kit.tui_installer; print(cli_tools_kit.__version__)"
           "$PY" -m cli_tools_kit --help
       # Output goes through a pipe here, so on Windows Python writes it in the
       # ANSI code page (cp1252) like it does for a real user's console log.
