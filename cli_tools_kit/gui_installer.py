@@ -59,11 +59,10 @@ except ImportError:  # pragma: no cover - exercised only where python3-tk is mis
     _HAVE_TK = False
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence
 
-from . import host, state, settings
+from . import host, state, settings, discovery
 from .cron_installer import read_crontab
 from .identity import InstallerIdentity
 from .autostart_gate import (
-    KNOWN_CONDITIONS,
     _parse_hhmm,
     build_exec_prefix,
     current_ssids,
@@ -143,58 +142,6 @@ def _skill_installed(skill_name: str) -> bool:
     if not skill_name:
         return False
     return os.path.isfile(os.path.join(state.CLAUDE_SKILLS_DIR, skill_name, "SKILL.md"))
-
-
-class ToolEntry(NamedTuple):
-    """Represents a single installable tool/shortcut."""
-    name: str           # Display name
-    desktop_file: str   # Desktop filename (e.g., "ai_search_auto.desktop")
-    script_path: str    # Full path to the python script
-    args: List[str]     # Arguments for the tool
-    icon: str           # Icon name
-    description: str    # Short description
-    terminal: bool      # Whether it needs a terminal
-    category: str       # Folder-derived provenance label (e.g. "Research"); the stable identity/usage key. Optional-legacy.
-    capability: str = ""  # Controlled capability word (e.g. "scrape") — the real taxonomy; the GUI groups rows by this. See validate_structure.CAPABILITY_VOCAB.
-    domain: str = ""    # Optional free distinguisher within a capability (e.g. "youtube", "embedding")
-    tags: List[str] = []  # Install-capability tags: GUI, CLI, Icon
-    alias: str = ""     # Alias name for CLI tools (required if no Icon tag)
-    default_autostart: bool = False  # Suggested default for the Auto-Start checkbox
-    cron_schedule: str = ""          # Cron schedule string (e.g. "@reboot") for CLI autostart
-    cron_args: List[str] = []        # Args to pass when running as cron job
-    skill_name: str = ""             # If non-empty, tool can install a Claude Code skill via --install-skill / --uninstall-skill
-    skill_status: str = ""           # Advertised skill freshness: "absent"|"current"|"stale" ("" = tool didn't report it)
-    autostart_conditions: List[str] = []  # Conditions this tool's autostart supports ("time_window", "network"); the values live in the installer's autostart.json, never in the tool. See cli_tools_kit.autostart_gate.
-
-
-def _group_label(entry: "ToolEntry") -> str:
-    """The band label for a row: the GROUP_BY field of *entry*.
-
-    Everything that keys on a band (the headers, expand/collapse, the search
-    show/hide) must go through this, so all of them agree on one label.
-    """
-    return getattr(entry, state.GROUP_BY, "") or entry.capability
-
-
-class ToolGroup(NamedTuple):
-    """A group of tools from the same script (parent + children)."""
-    parent: ToolEntry
-    children: List[ToolEntry]  # Empty if single tool
-
-
-def group_tools(tools: List[ToolEntry]) -> List[ToolGroup]:
-    """Group tools by script_path. First tool becomes parent, rest are children."""
-    by_script: Dict[str, List[ToolEntry]] = {}
-    for t in tools:
-        by_script.setdefault(t.script_path, []).append(t)
-
-    groups = []
-    for script_path, script_tools in by_script.items():
-        if len(script_tools) == 1:
-            groups.append(ToolGroup(parent=script_tools[0], children=[]))
-        else:
-            groups.append(ToolGroup(parent=script_tools[0], children=script_tools[1:]))
-    return groups
 
 
 def get_system_icons() -> List[tuple]:
@@ -393,233 +340,6 @@ def render_emoji_icon(emoji_char: str, output_path: str, size: int = 128) -> boo
     return False
 
 
-# ================= METADATA EXTRACTION =================
-
-def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
-    """
-    Gets metadata by running the script with --advertise.
-    This is the ONLY supported discovery method.
-    """
-    entries = []
-    try:
-        # Use sys.executable to ensure we use the same python environment
-        result = subprocess.run(
-            [sys.executable, file_path, "--advertise"],
-            capture_output=True, encoding="utf-8", errors="replace", timeout=5,
-            env=host.child_env(),
-        )
-        if result.returncode == 0:
-            data = json.loads(result.stdout)
-            # Tolerate a single-object advertise, and skip any non-dict entry
-            # rather than letting one malformed tool's JSON abort discovery for
-            # the whole tree (an uncaught AttributeError here would do exactly that).
-            if isinstance(data, dict):
-                data = [data]
-            if not isinstance(data, list):
-                data = []
-            for item in data:
-                if not isinstance(item, dict):
-                    continue
-                # Parse tags (new protocol) or infer from cli_only (backward compat)
-                tags = item.get("tags", [])
-                if not tags:
-                    # Backward compatibility: infer tags from cli_only
-                    cli_only = item.get("cli_only", False)
-                    if cli_only:
-                        tags = ["CLI"]
-                    else:
-                        tags = ["GUI", "Icon"]
-
-                # Alias is required if no Icon tag
-                has_icon = "Icon" in tags
-                alias = item.get("alias", "")
-                if not has_icon and not alias:
-                    # Default alias from desktop_file stem
-                    alias = item.get("desktop_file", "").replace(".desktop", "")
-
-                entries.append(ToolEntry(
-                    name=item.get("name", "Unknown"),
-                    desktop_file=item.get("desktop_file", "unknown.desktop"),
-                    script_path=file_path,
-                    args=item.get("args", []),
-                    icon=item.get("icon", "system-run"),
-                    description=item.get("desc", ""),
-                    terminal=item.get("terminal", False),
-                    category=category,
-                    # capability is the real taxonomy and the GUI group key; fall
-                    # back to the folder-derived category for tools not yet
-                    # migrated to the tag schema so grouping never sees "".
-                    capability=item.get("capability") or category.lower(),
-                    domain=item.get("domain", ""),
-                    tags=tags,
-                    alias=alias,
-                    default_autostart=bool(item.get("default_autostart", False)),
-                    cron_schedule=item.get("cron_schedule", ""),
-                    cron_args=item.get("cron_args", []),
-                    skill_name=item.get("skill_name", ""),
-                    skill_status=item.get("skill_status", ""),
-                    autostart_conditions=[
-                        c for c in item.get("autostart_conditions", []) or []
-                        if c in KNOWN_CONDITIONS
-                    ],
-                ))
-    except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
-        # If a tool fails to advertise, it is ignored.
-        pass
-
-    return entries
-
-def _is_tool_dir(path: str) -> bool:
-    """A directory is a tool when it holds both main.py and requirements.txt."""
-    return (os.path.isfile(os.path.join(path, "main.py"))
-            and os.path.isfile(os.path.join(path, "requirements.txt")))
-
-
-def _default_tools_discoverer(root: str) -> List[tuple]:
-    """Find tools in either standard layout, returning (entry_point, category).
-
-    Two shapes are recognised, and a tree may mix them:
-
-    * **flat** — ``<root>/<tool>/main.py``. The common case, and what a new
-      organisation gets by default. Category is empty, so rows band by each
-      tool's advertised ``capability``.
-    * **nested** — ``<root>/tools_<category>/<tool>/main.py``. The original
-      layout, where the folder supplies the category label.
-
-    Directories starting with "_" or "." are skipped in both (``_shared``,
-    ``_archive``, ``.git``). A wrapper with a different shape passes its own
-    ``discoverer``; see README § Reusing the installer in your org.
-    """
-    found = []
-    if not os.path.isdir(root):
-        return found
-    for item in sorted(os.listdir(root)):
-        item_path = os.path.join(root, item)
-        if not os.path.isdir(item_path) or item.startswith(("_", ".")):
-            continue
-
-        if item.startswith("tools_"):
-            category = item.replace("tools_", "").title()
-            for sub_item in sorted(os.listdir(item_path)):
-                sub_path = os.path.join(item_path, sub_item)
-                if not os.path.isdir(sub_path) or sub_item.startswith(("_", ".")):
-                    continue
-                if _is_tool_dir(sub_path):
-                    found.append((os.path.join(sub_path, "main.py"), category))
-        elif _is_tool_dir(item_path):
-            found.append((os.path.join(item_path, "main.py"), ""))
-    return found
-
-
-def _walk_entry_point(dirpath: str, filenames) -> Optional[str]:
-    """The entry point of a tool directory, or None when it is not one.
-
-    A directory is a tool when it holds ``requirements.txt`` next to either
-    ``main.py`` or ``<dirname>.py`` with dashes written as underscores, which is
-    how a one-tool repo names its script (manim-kit ships ``manim_kit.py``).
-    """
-    if "requirements.txt" not in filenames:
-        return None
-    own = os.path.basename(dirpath).replace("-", "_") + ".py"
-    for name in ("main.py", own):
-        if name in filenames:
-            return os.path.join(dirpath, name)
-    return None
-
-
-def _walk_pruned(name: str) -> bool:
-    return (name.startswith(".") or name.startswith("vendor")
-            or name in state.DISCOVERY_PRUNE or name in state.EXTRA_PRUNE)
-
-
-def _walk_category(root: str, tool_dir: str) -> str:
-    """The tool's parent directory name, or the root's name when the tool is the root."""
-    if tool_dir == root:
-        return os.path.basename(root)
-    parent = os.path.dirname(tool_dir)
-    return "" if parent == root else os.path.basename(parent)
-
-
-def _walk_tools_discoverer(root: str) -> List[tuple]:
-    """Find tools anywhere under one root, returning (entry_point, category).
-
-    The root itself counts, so a repo whose script sits at its top level is one
-    tool. Below it the walk goes at most ``MAX_DISCOVERY_DEPTH`` levels and
-    skips the names in ``DISCOVERY_PRUNE`` and ``EXTRA_PRUNE``, anything
-    starting with a dot, and anything starting with ``vendor``. A wrapper fills
-    ``EXTRA_PRUNE`` by passing ``prune``. This is the default when a wrapper passes
-    ``discovery_roots``, because a tree of several repos puts tools at depths
-    the flat/``tools_*`` layouts do not describe.
-    """
-    found = []
-    if not os.path.isdir(root):
-        return found
-    root = os.path.abspath(root)
-    for dirpath, dirnames, filenames in os.walk(root):
-        rel = os.path.relpath(dirpath, root)
-        depth = 0 if rel == "." else rel.count(os.sep) + 1
-        dirnames[:] = sorted(d for d in dirnames
-                             if not _walk_pruned(d) and depth < state.MAX_DISCOVERY_DEPTH)
-        entry = _walk_entry_point(dirpath, filenames)
-        if entry:
-            found.append((entry, _walk_category(root, dirpath)))
-    return found
-
-
-def discover_tools(run_pre: bool = True) -> List[ToolEntry]:
-    """Scan configured DISCOVERY_ROOTS for installable tools.
-
-    By default scans ROOT_DIR with the tools_* / main.py layout. A wrapper
-    can set DISCOVERY_ROOTS and/or DISCOVERER to plug in a different layout
-    (e.g. AutomatedAlchemy's flat project-per-dir tree).
-
-    If PRE_DISCOVERY is set it runs first (for repo-clone bootstrapping). Pass
-    run_pre=False to skip it — the login-check path does this so a login hook
-    can never reach the network.
-    """
-    if run_pre and state.PRE_DISCOVERY is not None:
-        state.PRE_DISCOVERY(state.REFRESH_REPOS)
-
-    roots = state.DISCOVERY_ROOTS or [state.ROOT_DIR]
-    # A single root_dir keeps the flat/tools_* layouts it has always used; the
-    # category label of a tools_<cat>/ tree is only produced there. Several
-    # roots mean repos of different shapes, so those get the wider walk.
-    discoverer = state.DISCOVERER or (_walk_tools_discoverer if state.DISCOVERY_ROOTS
-                                else _default_tools_discoverer)
-
-    # Each tool is probed by spawning it with --advertise (a short-lived
-    # subprocess that exits before its heavy imports). That makes discovery
-    # I/O-bound, so probe every tool concurrently instead of paying the spawn
-    # latency serially — this scan runs on every GUI launch and every login
-    # `--check`, so the serial cost (≈Ntools × spawn) was the whole startup
-    # delay. map() preserves discovery order, get_metadata_native swallows its
-    # own errors (returns []), and subprocess.run drops the GIL while waiting,
-    # so threads parallelize the wall-clock time.
-    pairs = [(entry_point, category)
-             for root in roots
-             for entry_point, category in discoverer(root)]
-    tools = []
-    if pairs:
-        with ThreadPoolExecutor(max_workers=min(len(pairs), 16)) as pool:
-            for entries in pool.map(lambda p: get_metadata_native(*p), pairs):
-                tools.extend(entries)
-    # Take note of skills whose installed copy is out of date vs. the tool's
-    # bundled version (reported via the --advertise `skill_status` field) and
-    # suggest the update. Printed once per discovery so a terminal run surfaces
-    # it even without the GUI; the GUI also flags these rows (see
-    # _update_status_labels) and re-applies them on demand.
-    for t in tools:
-        if getattr(t, "skill_status", "") == "stale":
-            print(
-                f"[installer] Skill update available: '{t.skill_name}' (bundled with "
-                f"{t.name}) — the installed ~/.claude/skills/{t.skill_name}/ is out of "
-                f"date. Tick its Skill box and Apply, or run: "
-                f"{sys.executable} {t.script_path} --install-skill",
-                file=sys.stderr,
-            )
-    return tools
-
-
 def _skill_md_path(skill_name: str) -> str:
     return os.path.join(state.CLAUDE_SKILLS_DIR, skill_name, "SKILL.md")
 
@@ -707,7 +427,7 @@ def ensure_apps_dir():
     if not os.path.exists(state.APPS_DIR):
         os.makedirs(state.APPS_DIR)
 
-def tool_shortcut_path(tool: ToolEntry) -> str:
+def tool_shortcut_path(tool: discovery.ToolEntry) -> str:
     """Where this tool's shortcut lives: a .desktop file, or a .lnk on Windows."""
     if host.IS_WINDOWS:
         return os.path.join(state.APPS_DIR,
@@ -799,7 +519,7 @@ def _save_aliases(aliases: dict) -> None:
             # raw '{cmd}' wrapper that leaves the inner quote unbalanced.
             f.write(f"alias {name}={shlex.quote(cmd)}\n")
 
-def is_installed(tool: ToolEntry) -> bool:
+def is_installed(tool: discovery.ToolEntry) -> bool:
     """Check if a tool is installed based on its tags."""
     has_icon = "Icon" in tool.tags
     if has_icon:
@@ -809,7 +529,7 @@ def is_installed(tool: ToolEntry) -> bool:
         # Check if ANY alias points to this script (not just the expected one)
         return _find_alias_for_script(tool.script_path) is not None
 
-def needs_update(tool: ToolEntry) -> bool:
+def needs_update(tool: discovery.ToolEntry) -> bool:
     """Check if an installed tool has outdated metadata (e.g., renamed alias).
 
     Returns True if the tool is installed but its configuration differs from
@@ -849,7 +569,7 @@ def needs_update(tool: ToolEntry) -> bool:
             return False  # Not installed
         return tool.alias not in aliases_for_script  # installed under a different name → rename
 
-def install_tool(tool: ToolEntry, skip_deps: bool = False) -> tuple[bool, str]:
+def install_tool(tool: discovery.ToolEntry, skip_deps: bool = False) -> tuple[bool, str]:
     """Invokes the tool's own --install argument. Returns (success, output).
 
     When skip_deps is True, sets TOOLS_INSTALLER_SKIP_DEPS=1 in the child
@@ -877,7 +597,7 @@ def install_tool(tool: ToolEntry, skip_deps: bool = False) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
-def remove_tool(tool: ToolEntry) -> tuple[bool, str]:
+def remove_tool(tool: discovery.ToolEntry) -> tuple[bool, str]:
     """Invokes the tool's own --remove argument. Returns (success, output)."""
     try:
         cmd = [sys.executable, tool.script_path, "--remove"] + tool.args
@@ -894,7 +614,7 @@ def remove_tool(tool: ToolEntry) -> tuple[bool, str]:
     except Exception as e:
         return False, str(e)
 
-def install_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
+def install_skill_for_tool(tool: discovery.ToolEntry) -> tuple[bool, str]:
     """Invokes the tool's --install-skill argument. Returns (success, output).
 
     Used by the installer GUI when the per-row 'Skill' checkbox is toggled
@@ -914,7 +634,7 @@ def install_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
         return False, str(e)
 
 
-def uninstall_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
+def uninstall_skill_for_tool(tool: discovery.ToolEntry) -> tuple[bool, str]:
     """Invokes the tool's --uninstall-skill argument. Returns (success, output)."""
     try:
         cmd = [sys.executable, tool.script_path, "--uninstall-skill"] + tool.args
@@ -940,9 +660,9 @@ class InstallHooks(NamedTuple):
     directly. That still works in 1.x, but this is the supported way.
     """
     install_tool: Optional[Callable[..., tuple]] = None
-    remove_tool: Optional[Callable[[ToolEntry], tuple]] = None
-    install_skill: Optional[Callable[[ToolEntry], tuple]] = None
-    uninstall_skill: Optional[Callable[[ToolEntry], tuple]] = None
+    remove_tool: Optional[Callable[[discovery.ToolEntry], tuple]] = None
+    install_skill: Optional[Callable[[discovery.ToolEntry], tuple]] = None
+    uninstall_skill: Optional[Callable[[discovery.ToolEntry], tuple]] = None
 
 
 def _apply_hooks(hooks: InstallHooks) -> None:
@@ -1148,7 +868,7 @@ def remove_orphan_alias(orphan: OrphanAlias) -> tuple[bool, str]:
 
 # ================= AUTOSTART UTILITIES =================
 
-def get_autostart_path(tool: ToolEntry) -> str:
+def get_autostart_path(tool: discovery.ToolEntry) -> str:
     """Where a tool's autostart entry lives: a .desktop symlink in
     ~/.config/autostart, or a copy of its .lnk in the Startup folder."""
     if host.IS_WINDOWS:
@@ -1157,7 +877,7 @@ def get_autostart_path(tool: ToolEntry) -> str:
     return os.path.join(state.AUTOSTART_DIR, tool.desktop_file)
 
 
-def _cron_line_for_tool(tool: ToolEntry) -> str:
+def _cron_line_for_tool(tool: discovery.ToolEntry) -> str:
     """Build the crontab line for a cron-based tool."""
     parts = [tool.cron_schedule, sys.executable, tool.script_path] + list(tool.cron_args)
     return " ".join(parts)
@@ -1171,7 +891,7 @@ def _cron_contains(line: str) -> bool:
         return False
 
 
-def is_autostart_enabled(tool: ToolEntry) -> bool:
+def is_autostart_enabled(tool: discovery.ToolEntry) -> bool:
     """Check if autostart is enabled for a tool."""
     if "Icon" in tool.tags:
         return os.path.exists(get_autostart_path(tool))
@@ -1180,7 +900,7 @@ def is_autostart_enabled(tool: ToolEntry) -> bool:
     return False
 
 
-def autostart_tool_key(tool: ToolEntry) -> str:
+def autostart_tool_key(tool: discovery.ToolEntry) -> str:
     """The key a tool's conditions are stored under.
 
     The .desktop stem: stable across renames of the display name, and already
@@ -1189,12 +909,12 @@ def autostart_tool_key(tool: ToolEntry) -> str:
     return os.path.splitext(tool.desktop_file)[0]
 
 
-def get_autostart_conditions(tool: ToolEntry) -> dict:
+def get_autostart_conditions(tool: discovery.ToolEntry) -> dict:
     """The conditions currently configured for *tool* on this host."""
     return load_tool_conditions(state.IDENTITY.slug, autostart_tool_key(tool))
 
 
-def set_autostart_conditions(tool: ToolEntry, conditions: Optional[dict]) -> None:
+def set_autostart_conditions(tool: discovery.ToolEntry, conditions: Optional[dict]) -> None:
     """Store *tool*'s conditions, then rewrite its entry if autostart is on.
 
     The Exec line differs between a gated and an ungated entry, so a change
@@ -1217,7 +937,7 @@ def _read_desktop_exec(desktop_path: str) -> str:
     return ""
 
 
-def _write_gated_autostart(tool: ToolEntry, desktop_path: str,
+def _write_gated_autostart(tool: discovery.ToolEntry, desktop_path: str,
                            autostart_path: str, conditions: dict) -> tuple[bool, str]:
     """Write an autostart .desktop whose Exec runs *tool* through the gate.
 
@@ -1266,7 +986,7 @@ def _write_gated_autostart(tool: ToolEntry, desktop_path: str,
     return True, f"Autostart enabled (conditional): {tool.name}"
 
 
-def enable_autostart(tool: ToolEntry) -> tuple[bool, str]:
+def enable_autostart(tool: discovery.ToolEntry) -> tuple[bool, str]:
     """Enable autostart for a tool.
 
     Icon tools: create a .desktop symlink in ~/.config/autostart.
@@ -1327,7 +1047,7 @@ def enable_autostart(tool: ToolEntry) -> tuple[bool, str]:
     return False, "Tool has no supported autostart method"
 
 
-def disable_autostart(tool: ToolEntry) -> tuple[bool, str]:
+def disable_autostart(tool: discovery.ToolEntry) -> tuple[bool, str]:
     """Disable autostart for a tool.
 
     Returns (success, message).
@@ -1678,7 +1398,7 @@ class InstallerApp:
         },
     }
 
-    def __init__(self, root: tk.Tk, tools: List[ToolEntry]):
+    def __init__(self, root: tk.Tk, tools: List[discovery.ToolEntry]):
         self.root = root
         self.root.withdraw()  # Hide until properly sized
         self.tools = tools
@@ -1694,7 +1414,7 @@ class InstallerApp:
         self.status_labels: Dict[str, ttk.Label] = {}
         self.icon_labels: Dict[str, ttk.Label] = {}  # For displaying tool icons
         self.icon_cache: Dict[str, Optional[ImageTk.PhotoImage]] = {}  # Prevent GC
-        self.tools_by_key: Dict[str, ToolEntry] = {}  # For icon click lookup
+        self.tools_by_key: Dict[str, discovery.ToolEntry] = {}  # For icon click lookup
         self.tk_frames: List[tk.Frame] = []  # tk.Frame instances that need bg updates on theme change
         self.tk_widgets: List[tk.Widget] = []  # Other tk widgets that need bg updates
         self.usage_counts: Dict[str, int] = get_all_usage_counts()  # Tool usage statistics
@@ -2300,14 +2020,14 @@ class InstallerApp:
         # headers are stable across runs.
         # NB: must not reuse `t` here — it holds the theme dict for the whole
         # of _setup_ui (footer, log box and search-focus closures read it).
-        tools_by_group: Dict[str, List[ToolEntry]] = {}
+        tools_by_group: Dict[str, List[discovery.ToolEntry]] = {}
         for entry in self.tools:
-            tools_by_group.setdefault(_group_label(entry), []).append(entry)
+            tools_by_group.setdefault(discovery._group_label(entry), []).append(entry)
 
         # Convert to groups within each band
-        categories: Dict[str, List[ToolGroup]] = {}
+        categories: Dict[str, List[discovery.ToolGroup]] = {}
         for group_label in sorted(tools_by_group):
-            categories[group_label] = group_tools(tools_by_group[group_label])
+            categories[group_label] = discovery.group_tools(tools_by_group[group_label])
 
         self.expand_vars: Dict[str, tk.BooleanVar] = {}  # Track expanded state
         self.children_frames: Dict[str, ttk.Frame] = {}  # Track child frames for show/hide
@@ -2565,7 +2285,7 @@ class InstallerApp:
         self.icon_cache[icon_name_or_path] = photo
         return photo
 
-    def _get_effective_icon(self, tool: ToolEntry) -> tuple[str, Optional[ImageTk.PhotoImage]]:
+    def _get_effective_icon(self, tool: discovery.ToolEntry) -> tuple[str, Optional[ImageTk.PhotoImage]]:
         """Get the effective icon for a tool, checking custom icons first.
 
         Returns:
@@ -4032,7 +3752,7 @@ class InstallerApp:
         else:
             icon_label.configure(image="", text="[?]")
 
-    def _get_tool_usage_key(self, tool: ToolEntry) -> str:
+    def _get_tool_usage_key(self, tool: discovery.ToolEntry) -> str:
         """Get the usage tracking key for a tool: its directory name.
 
         The key must stay stable across regroupings, so it is the tool's own
@@ -4045,7 +3765,7 @@ class InstallerApp:
         tool_dir = os.path.dirname(tool.script_path)
         return os.path.basename(tool_dir)
 
-    def _format_desc_with_alias(self, tool: ToolEntry) -> str:
+    def _format_desc_with_alias(self, tool: discovery.ToolEntry) -> str:
         """Format tool description with alias hint for CLI tools."""
         desc_text = tool.description
         if "Icon" not in tool.tags and tool.alias:
@@ -4165,7 +3885,7 @@ class InstallerApp:
             lbl.pack(side="left", padx=(8, 0))
             self.tk_widgets.append(lbl)
 
-    def _render_tool_row(self, tool: ToolEntry, parent_frame: ttk.Frame, indent: int = 0) -> None:
+    def _render_tool_row(self, tool: discovery.ToolEntry, parent_frame: ttk.Frame, indent: int = 0) -> None:
         """Render a single tool row of the tools table. *indent* adds extra
         left padding inside the row (child rows of a group) — the row itself
         always spans the full table width so the table edges stay straight."""
@@ -4286,7 +4006,7 @@ class InstallerApp:
             lbl.configure(wraplength=max(100, event.width - 10))
         info_frame.bind("<Configure>", update_wrap)
 
-    def _render_tool_group(self, group: ToolGroup, current_row: int) -> int:
+    def _render_tool_group(self, group: discovery.ToolGroup, current_row: int) -> int:
         """Render a tool group (parent + expandable children). Returns next row number."""
         parent = group.parent
         children = group.children
@@ -4299,7 +4019,7 @@ class InstallerApp:
             self.tool_group_data.append({
                 # Band label — must match the key used for category_widgets so
                 # search show/hide targets the right header.
-                'category': _group_label(parent),
+                'category': discovery._group_label(parent),
                 'always_frames': [container],
                 'expand_frame': None,
                 'expand_key': None,
@@ -4461,7 +4181,7 @@ class InstallerApp:
 
         self.tool_group_data.append({
             # Band label (see single-tool branch above).
-            'category': _group_label(parent),
+            'category': discovery._group_label(parent),
             'always_frames': [parent_container],
             'expand_frame': children_frame,
             'expand_key': group_key,
@@ -5633,7 +5353,7 @@ def cli_uninstall_self():
     else:
         print("Installer shortcut not found.")
 
-def cli_uninstall_all(tools: List[ToolEntry]):
+def cli_uninstall_all(tools: List[discovery.ToolEntry]):
     removed = 0
     print(f"\nUninstalling all {len(tools)} tools...")
     for tool in tools:
@@ -5711,7 +5431,7 @@ def cli_cleanup(dry_run: bool = False):
     print(summary + ".\n")
 
 
-def cli_update_all(tools: List[ToolEntry]):
+def cli_update_all(tools: List[discovery.ToolEntry]):
     """Sync: clean up orphans, then reinstall manager and all installed tool shortcuts."""
     removed = 0
     updated = 0
@@ -5808,7 +5528,7 @@ def cli_check() -> int:
 
     try:
         # run_pre=False: a login hook must never reach the network (no repo clone).
-        tools = discover_tools(run_pre=False)
+        tools = discovery.discover_tools(run_pre=False)
     except Exception as e:
         _notify_send(f"{state.NOTIFY_APP}: check failed", str(e))
         return 0
@@ -5966,7 +5686,7 @@ def main():
         cli_cleanup(dry_run=not args.yes)
         return
 
-    tools = discover_tools()
+    tools = discovery.discover_tools()
 
     if args.uninstall_all:
         cli_uninstall_all(tools)
@@ -6120,7 +5840,7 @@ def run(*, identity: Optional[InstallerIdentity] = None,
 # globals (gi.IDENTITY, gi.install_tool = ...). Those names now live in the
 # modules below. Reading, assigning or deleting one through gui_installer goes
 # to the module that holds it, where every screen looks it up at call time.
-_ENGINE_MODULES = (state, settings)
+_ENGINE_MODULES = (state, settings, discovery)
 
 
 def _home_of(name: str):
