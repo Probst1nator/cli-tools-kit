@@ -34,7 +34,11 @@ jobs:
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev,gui]"
-      - run: pytest --cov --cov-report=term
+      # xvfb gives the GUI smoke test a display; Windows runners have one.
+      - if: runner.os == 'Linux'
+        run: xvfb-run -a pytest --cov --cov-report=term
+      - if: runner.os == 'Windows'
+        run: pytest --cov --cov-report=term
 
   # Builds the wheel, installs it into a clean venv and drives the example
   # installer headless from there, so a module missing from the package or an
@@ -78,4 +82,5 @@ jobs:
           cd "$RUNNER_TEMP" && cp -r "$GITHUB_WORKSPACE/examples" . && cd examples/org-installer
           "$PY" installer.py --list
           "$PY" installer.py --apply greeter --skill-target none
-          "$PY" installer.py --list | grep -F "[✓]"
+          # ✓ where the pipe can encode it, x on a cp1252 pipe.
+          "$PY" installer.py --list | grep -E '^ \[(✓|x)\] .*\(greeter\)'
