@@ -224,3 +224,12 @@ def test_tool_output_reaches_the_kit_whatever_the_parent_encoding(
     ok, output = gi.install_tool(tool, skip_deps=True)
     assert ok, output
     assert output == "✅ installed"
+
+
+def test_symbol_falls_back_to_ascii_where_the_stream_cannot_encode_it() -> None:
+    import io
+
+    cp1252 = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+    utf8 = io.TextIOWrapper(io.BytesIO(), encoding="utf-8")
+    assert host.symbol("✓", "x", cp1252) == "x"
+    assert host.symbol("✓", "x", utf8) == "✓"

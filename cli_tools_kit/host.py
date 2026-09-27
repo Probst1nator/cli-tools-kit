@@ -43,6 +43,20 @@ def harden_stdio(streams=None) -> None:
             pass
 
 
+def symbol(fancy: str, plain: str, stream=None) -> str:
+    """``fancy`` where ``stream`` can encode it, else the ASCII ``plain``.
+
+    harden_stdio() stops the crash, but a ✓ that arrives as ``?`` reads as
+    "unknown". A status column should say ``x`` on a cp1252 pipe instead.
+    """
+    encoding = getattr(stream if stream is not None else sys.stdout, "encoding", None)
+    try:
+        fancy.encode(encoding or "ascii")
+    except (UnicodeEncodeError, LookupError):
+        return plain
+    return fancy
+
+
 def child_env(env: Optional[dict] = None) -> dict:
     """Environment for a tool's subprocess: its stdout and stderr in UTF-8.
 

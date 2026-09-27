@@ -6213,12 +6213,12 @@ def main():
 
     if args.enable_autostart_check:
         path = enable_autostart_check()
-        print(f"✓ Login update check enabled: {path}")
+        print(f"{host.symbol('✓', 'OK')} Login update check enabled: {path}")
         print(f"  Runs: {sys.executable} {ENTRY_SCRIPT} --check")
         return
 
     if args.disable_autostart_check:
-        print("✓ Login update check disabled" if disable_autostart_check()
+        print(f"{host.symbol('✓', 'OK')} Login update check disabled" if disable_autostart_check()
               else "• Login update check was not enabled")
         return
 
@@ -6255,9 +6255,9 @@ def main():
             installed = is_installed(t)
             stale = needs_update(t) if installed else False
             if stale:
-                status = "⟳"  # Needs update
+                status = host.symbol("⟳", "u")  # Needs update
             elif installed:
-                status = "✓"
+                status = host.symbol("✓", "x")
             else:
                 status = " "
             tags_str = ",".join(t.tags) if t.tags else "-"
