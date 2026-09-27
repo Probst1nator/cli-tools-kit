@@ -15,6 +15,8 @@ Stability for what counts as the public surface.
   migrating away from, never touching a tagged line.
 - `ToolInstaller.variants(desktop_file=None)`: the public name of `_select`.
 - `host.harden_stdio()`, `host.child_env()` and `host.symbol()`.
+- `cli_tools_kit.testing.assert_advertises(script)`: a tool's own test that its
+  `--advertise` answer follows PROTOCOL.md.
 - CI on GitHub Actions: ruff, pytest on Linux and Windows for Python 3.10 to
   3.13, a GUI smoke test under xvfb, and an install from the built wheel.
 
