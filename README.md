@@ -58,7 +58,8 @@ From 1.0.0 the kit follows [Semantic Versioning](https://semver.org/). The
 public surface is what `tests/test_public_api.py` pins: the names in
 `cli_tools_kit.__all__`, `ToolInstaller`/`ToolMetadata`/`CronInstaller` and
 their methods, `gui_installer.run()` and its keywords, `InstallHooks`,
-`sources.run_installer()`, `tui_installer.SkillTarget`, the taxonomy
+`sources.run_installer()`, `tui_installer.SkillTarget`,
+`testing.assert_advertises()`, the taxonomy
 functions a tree's regroup script calls, the installer's command-line flags,
 and the `--advertise` JSON in [`PROTOCOL.md`](PROTOCOL.md).
 
@@ -499,6 +500,21 @@ per repo it could not (`log=` takes any callable, `print` by default). Pass
 `clone=False` to resolve from the filesystem alone and never reach the network.
 Reading the TOML needs Python 3.11 or the `tomli` package, which is a dependency
 on 3.10.
+
+## Testing a tool's `--advertise`
+
+A tool that breaks the protocol is skipped by the parent installer and simply
+disappears from the list. Put this in the tool's own tests to catch that:
+
+```python
+from cli_tools_kit.testing import assert_advertises
+
+def test_advertise():
+    assert_advertises("main.py")
+```
+
+It runs the probe the way a parent does (5 s limit, only JSON on stdout) and
+fails with every problem it finds.
 
 ## Tests
 

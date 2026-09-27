@@ -75,6 +75,12 @@ def test_installer_side() -> None:
     assert callable(tui_installer.claude_target)
 
 
+def test_testing_helper() -> None:
+    from cli_tools_kit import testing
+    assert _params(testing.assert_advertises) >= {"script", "python", "timeout"}
+    assert _params(testing.validate_advertise) >= {"data"}
+
+
 def test_grouping_side() -> None:
     assert _params(groups.ensure_groups) >= {"root"}
     assert isinstance(groups.UNGROUPED, str)
