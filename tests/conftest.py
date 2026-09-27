@@ -67,3 +67,15 @@ def sandbox_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # os.path.expanduser caches its lookups via os.environ['HOME']; that's
     # fine because monkeypatch.setenv updates os.environ in-place.
     return home
+
+
+@pytest.fixture
+def linux_host(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Take the Linux branches on any host.
+
+    Every module reads ``host.IS_WINDOWS`` at call time, so a test of the
+    .desktop, alias-file or display logic runs the same on the Windows CI
+    runner. The Windows branches are covered by test_host.py.
+    """
+    from cli_tools_kit import host
+    monkeypatch.setattr(host, "IS_WINDOWS", False)

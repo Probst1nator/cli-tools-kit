@@ -44,13 +44,13 @@ def test_flags_win_over_environment() -> None:
     assert not tui.prefer_tui(force_gui=True, environ={})
 
 
-def test_no_display_means_tui() -> None:
+def test_no_display_means_tui(linux_host) -> None:
     assert tui.prefer_tui(environ={})
     assert not tui.prefer_tui(environ={"DISPLAY": ":0"})
     assert not tui.prefer_tui(environ={"WAYLAND_DISPLAY": "wayland-0"})
 
 
-def test_missing_tkinter_means_tui_even_with_display() -> None:
+def test_missing_tkinter_means_tui_even_with_display(linux_host) -> None:
     assert tui.prefer_tui(have_tk=False, environ={"DISPLAY": ":0"})
 
 

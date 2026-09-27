@@ -1,10 +1,18 @@
-"""Tests for ToolInstaller — desktop file and bash alias install/remove."""
+"""Tests for ToolInstaller — desktop file and bash alias install/remove.
+
+These are the Linux branches, so every test here runs with ``linux_host``;
+the Windows shims and Start Menu entries are covered in test_host.py.
+"""
 
 from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from cli_tools_kit import ToolInstaller, ToolMetadata
+
+pytestmark = pytest.mark.usefixtures("linux_host")
 
 
 def _make_script(home: Path) -> str:

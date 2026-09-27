@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -9,6 +10,14 @@ import pytest
 
 from cli_tools_kit import sources
 from cli_tools_kit.sources import Source, load_sources, resolve_sources
+
+
+def _lit(path) -> str:
+    """A path as a TOML literal string, the form the kit itself writes.
+
+    A basic string would read the backslashes of a Windows path as escapes.
+    """
+    return f"'{path}'"
 
 
 def _write(path: Path, body: str) -> Path:
@@ -70,7 +79,7 @@ name = "org/lab"
 url = "https://example.invalid/lab.git"
 """)
     _write(tmp_path / "installer.local.toml", f"""
-root = "{tmp_path / 'elsewhere'}"
+root = {_lit(tmp_path / 'elsewhere')}
 
 [[source]]
 name = "org/tools"
@@ -78,7 +87,7 @@ path = "other"
 
 [[source]]
 name = "org/lab"
-path = "{tmp_path / 'lab'}"
+path = {_lit(tmp_path / 'lab')}
 """)
     loaded = load_sources(config)
     assert loaded[0].path == str(tmp_path / "other")   # replaced
@@ -232,6 +241,8 @@ def test_no_clone_into_a_root_that_does_not_exist(tmp_path: Path, monkeypatch) -
     assert any("--root DIR" in line for line in lines)
 
 
+@pytest.mark.skipif(os.name == "nt", reason="chmod cannot make a directory "
+                    "read-only on Windows, and os.access reports it writable")
 def test_no_clone_into_a_root_that_cannot_be_written(tmp_path: Path, monkeypatch) -> None:
     root = tmp_path / "root"
     root.mkdir()
@@ -255,17 +266,17 @@ def test_a_nested_installer_toml_contributes_its_sources(tmp_path: Path) -> None
     _write(outer / "installer.toml", f"""
 [[source]]
 name = "inner"
-path = "{inner}"
+path = {_lit(inner)}
 """)
     _write(inner / "installer.toml", f"""
 [[source]]
 name = "deep"
-path = "{deep}"
+path = {_lit(deep)}
 """)
     config = _write(tmp_path / "installer.toml", f"""
 [[source]]
 name = "outer"
-path = "{outer}"
+path = {_lit(outer)}
 """)
     # outer -> inner is one level; inner -> deep is one level too far.
     assert resolve_sources(load_sources(config), tmp_path / "root") == [outer, inner]
@@ -274,9 +285,9 @@ path = "{outer}"
 def test_recursion_does_not_loop_back(tmp_path: Path) -> None:
     a = _repo(tmp_path / "a")
     b = _repo(tmp_path / "b")
-    _write(a / "installer.toml", f'[[source]]\nname = "b"\npath = "{b}"\n')
-    _write(b / "installer.toml", f'[[source]]\nname = "a"\npath = "{a}"\n')
-    config = _write(tmp_path / "installer.toml", f'[[source]]\nname = "a"\npath = "{a}"\n')
+    _write(a / "installer.toml", f'[[source]]\nname = "b"\npath = {_lit(b)}\n')
+    _write(b / "installer.toml", f'[[source]]\nname = "a"\npath = {_lit(a)}\n')
+    config = _write(tmp_path / "installer.toml", f'[[source]]\nname = "a"\npath = {_lit(a)}\n')
     assert resolve_sources(load_sources(config), tmp_path / "root") == [a, b]
 
 
@@ -339,7 +350,7 @@ def test_root_flag_wins_and_is_consumed(tmp_path: Path, engine) -> None:
 def test_local_root_is_the_default_when_no_flag(tmp_path: Path, engine,
                                                 never_asks) -> None:
     config = _tree(tmp_path)
-    _write(config.with_name("installer.local.toml"), f'root = "{tmp_path / "here"}"\n')
+    _write(config.with_name("installer.local.toml"), f'root = {_lit(tmp_path / "here")}\n')
     sources.run_installer(config, argv=[])
     assert engine["root_dir"] == str(tmp_path / "here")
 
@@ -430,7 +441,7 @@ def test_the_answer_keeps_the_local_files_sources(tmp_path: Path, engine,
     config = _tree(tmp_path)
     monkeypatch.chdir(tmp_path)
     local = _write(config.with_name("installer.local.toml"),
-                   f'[[source]]\nname = "org/tools"\npath = "{tmp_path / "other"}"\n')
+                   f'[[source]]\nname = "org/tools"\npath = {_lit(tmp_path / "other")}\n')
     _answers(monkeypatch, str(tmp_path / "picked"))
     sources.run_installer(config, argv=[])
     assert sources.local_root(config) == str(tmp_path / "picked")
@@ -440,7 +451,7 @@ def test_the_answer_keeps_the_local_files_sources(tmp_path: Path, engine,
 
 def test_an_existing_root_in_the_local_file_is_never_overwritten(tmp_path: Path) -> None:
     config = _write(tmp_path / "installer.toml", "")
-    _write(config.with_name("installer.local.toml"), f'root = "{tmp_path / "mine"}"\n')
+    _write(config.with_name("installer.local.toml"), f'root = {_lit(tmp_path / "mine")}\n')
     assert sources.save_local_root(config, str(tmp_path / "other")) is False
     assert sources.local_root(config) == str(tmp_path / "mine")
 
@@ -892,15 +903,15 @@ def test_a_local_pin_on_an_org_derived_name_is_used_without_cloning(
     pinned = _repo(root / "bloggen")
     also = _repo(root / "lernclaude")
     config = _org_tree(tmp_path, f"""
-root = "{root}"
+root = {_lit(root)}
 
 [[source]]
 name = "BlogGen"
-path = "{pinned}"
+path = {_lit(pinned)}
 
 [[source]]
 name = "lernclaude-fau"
-path = "{also}"
+path = {_lit(also)}
 """)
     api([_repo_json("BlogGen"), _repo_json("lernclaude-fau"), _repo_json("manim-kit")])
     git_calls: list = []
@@ -926,11 +937,11 @@ def test_a_local_pin_whose_path_is_gone_still_clones(tmp_path: Path, api,
     root = tmp_path / "root"
     root.mkdir()
     config = _org_tree(tmp_path, f"""
-root = "{root}"
+root = {_lit(root)}
 
 [[source]]
 name = "BlogGen"
-path = "{tmp_path / 'never-checked-out'}"
+path = {_lit(tmp_path / 'never-checked-out')}
 """)
     api([_repo_json("BlogGen")])
     git_calls: list = []
@@ -950,7 +961,7 @@ def test_a_tracked_explicit_source_still_wins_over_the_listing(tmp_path: Path,
     config = _write(tmp_path / "installer.toml", f"""
 [[source]]
 name = "BlogGen"
-path = "{fork}"
+path = {_lit(fork)}
 
 [[source]]
 org = "acme"

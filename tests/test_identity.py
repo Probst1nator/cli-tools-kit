@@ -30,11 +30,11 @@ def test_slug_derives_every_name():
     assert ident.notify_label == "Acme Tools"
     assert ident.desktop_keywords == "acme-tools;ai;tool;"
     assert ident.marker_token == "acme-tools"
-    assert ident.aliases_path.endswith("/.acme_tools_aliases")
-    assert ident.config_path.endswith("/.config/acme-tools")
-    assert ident.config_file.endswith("/.config/acme-tools/config.json")
-    assert ident.icons_dir.endswith("/.config/acme-tools/icons")
-    assert ident.cache_path.endswith("/.cache/acme-tools")
+    assert ident.aliases_path.replace(os.sep, "/").endswith("/.acme_tools_aliases")
+    assert ident.config_path.replace(os.sep, "/").endswith("/.config/acme-tools")
+    assert ident.config_file.replace(os.sep, "/").endswith("/.config/acme-tools/config.json")
+    assert ident.icons_dir.replace(os.sep, "/").endswith("/.config/acme-tools/icons")
+    assert ident.cache_path.replace(os.sep, "/").endswith("/.cache/acme-tools")
     assert ident.check_desktop == "acme-tools-check.desktop"
     assert ident.check_log == "acme-tools-check.log"
     assert ident.check_state == "acme-tools-check.json"
@@ -120,7 +120,7 @@ def _tool(tmp_path: Path) -> Path:
 
 
 def test_tool_artifacts_carry_the_identity(sandbox_home: Path, tmp_path: Path,
-                                          monkeypatch):
+                                          monkeypatch, linux_host):
     monkeypatch.setenv("TOOLS_INSTALLER_SKIP_DEPS", "1")
     script = _tool(tmp_path)
     ident = InstallerIdentity(slug="acme-tools", title="Acme Tools")
@@ -141,7 +141,7 @@ def test_tool_artifacts_carry_the_identity(sandbox_home: Path, tmp_path: Path,
 
 
 def test_tool_takes_the_identity_of_the_installer_that_spawned_it(
-    sandbox_home: Path, tmp_path: Path, monkeypatch
+    sandbox_home: Path, tmp_path: Path, monkeypatch, linux_host
 ):
     # The engine installs a tool by running its --install in a subprocess, so
     # the identity travels through the environment.
@@ -160,7 +160,7 @@ def test_tool_takes_the_identity_of_the_installer_that_spawned_it(
 
 
 def test_tool_run_by_hand_keeps_the_legacy_names(sandbox_home: Path, tmp_path: Path,
-                                                 monkeypatch):
+                                                 monkeypatch, linux_host):
     monkeypatch.delenv(InstallerIdentity.ENV_VAR, raising=False)
     monkeypatch.setenv("TOOLS_INSTALLER_SKIP_DEPS", "1")
     inst = ToolInstaller(
@@ -192,13 +192,15 @@ def test_apply_identity_repoints_every_global(sandbox_home: Path):
         assert gi.SELF_DESKTOP_FILE == "acme-tools-installer.desktop"
         assert gi.WM_CLASS == "acme_tools_installer"
         assert gi.NOTIFY_APP == "Acme Tools"
-        assert gi.ALIASES_FILE.endswith("/.acme_tools_aliases")
-        assert gi.CONFIG_FILE.endswith("/.config/acme-tools/config.json")
-        assert gi.CUSTOM_ICONS_DIR.endswith("/.config/acme-tools/icons")
+        assert gi.ALIASES_FILE.replace(os.sep, "/").endswith("/.acme_tools_aliases")
+        assert gi.CONFIG_FILE.replace(os.sep, "/").endswith("/.config/acme-tools/config.json")
+        assert gi.CUSTOM_ICONS_DIR.replace(os.sep, "/").endswith("/.config/acme-tools/icons")
         # Derived paths are recomputed, not just the names they come from.
-        assert gi.CHECK_LOG.endswith("/acme-tools-check.log")
-        assert gi.CHECK_STATE.endswith("/acme-tools-check.json")
-        assert gi.AUTOSTART_CHECK_DESKTOP.endswith("/acme-tools-check.desktop")
+        assert gi.CHECK_LOG.replace(os.sep, "/").endswith("/acme-tools-check.log")
+        assert gi.CHECK_STATE.replace(os.sep, "/").endswith("/acme-tools-check.json")
+        # .desktop on Linux, a .lnk in the Startup folder on Windows.
+        check_entry = os.path.basename(gi.AUTOSTART_CHECK_DESKTOP)
+        assert os.path.splitext(check_entry)[0] == "acme-tools-check"
     finally:
         gi._apply_identity(before)
 
@@ -230,7 +232,7 @@ def test_default_discoverer_finds_flat_and_nested_layouts(tmp_path: Path):
     (tmp_path / "_shared" / "requirements.txt").write_text("")
     (tmp_path / "docs").mkdir()          # skipped: no main.py
 
-    found = {os.path.relpath(p, tmp_path): cat
+    found = {os.path.relpath(p, tmp_path).replace(os.sep, "/"): cat
              for p, cat in _default_tools_discoverer(str(tmp_path))}
     assert found == {
         "greeter/main.py": "",
@@ -286,7 +288,7 @@ def test_walk_discoverer_finds_the_three_layouts(tmp_path: Path):
     _tool(root / "tools" / "faullm")     # two levels down
     (root / "docs").mkdir()              # no entry point
 
-    found = {os.path.relpath(p, root): cat for p, cat in _walk_tools_discoverer(str(root))}
+    found = {os.path.relpath(p, root).replace(os.sep, "/"): cat for p, cat in _walk_tools_discoverer(str(root))}
     assert found == {
         "manim_kit.py": "manim-kit",     # category is the root's own name
         "greeter/main.py": "",           # parent is the root, so no category
@@ -311,7 +313,7 @@ def test_walk_discoverer_takes_the_directory_name_with_underscores(tmp_path: Pat
     _tool(tmp_path / "other-kit", "other-kit.py")     # the dashed spelling is not it
     _tool(tmp_path / "third-kit", "run.py")           # some other name is not it
 
-    found = [os.path.relpath(p, tmp_path) for p, _ in _walk_tools_discoverer(str(tmp_path))]
+    found = [os.path.relpath(p, tmp_path).replace(os.sep, "/") for p, _ in _walk_tools_discoverer(str(tmp_path))]
     assert found == ["manim-kit/manim_kit.py"]
 
 
@@ -325,7 +327,7 @@ def test_walk_discoverer_prunes_the_directories_that_are_not_tools(tmp_path: Pat
         _tool(tmp_path / skipped)
         _tool(tmp_path / skipped / "inner")
 
-    found = [os.path.relpath(p, tmp_path) for p, _ in _walk_tools_discoverer(str(tmp_path))]
+    found = [os.path.relpath(p, tmp_path).replace(os.sep, "/") for p, _ in _walk_tools_discoverer(str(tmp_path))]
     assert found == ["keeper/main.py"]
 
 
@@ -335,7 +337,7 @@ def test_walk_discoverer_stops_at_four_levels(tmp_path: Path):
     _tool(tmp_path / "a" / "b" / "c" / "deep")          # depth 4, found
     _tool(tmp_path / "a" / "b" / "c" / "d" / "deeper")  # depth 5, not found
 
-    found = [os.path.relpath(p, tmp_path) for p, _ in _walk_tools_discoverer(str(tmp_path))]
+    found = [os.path.relpath(p, tmp_path).replace(os.sep, "/") for p, _ in _walk_tools_discoverer(str(tmp_path))]
     assert found == ["a/b/c/deep/main.py"]
 
 
@@ -348,7 +350,7 @@ def test_walk_discoverer_takes_the_names_a_wrapper_prunes(tmp_path: Path, monkey
     _tool(tmp_path / "build")          # a default prune name, still pruned
 
     monkeypatch.setattr(gi, "EXTRA_PRUNE", {"web"})
-    found = [os.path.relpath(p, tmp_path)
+    found = [os.path.relpath(p, tmp_path).replace(os.sep, "/")
              for p, _ in gi._walk_tools_discoverer(str(tmp_path))]
     assert found == ["keeper/main.py"]
 
