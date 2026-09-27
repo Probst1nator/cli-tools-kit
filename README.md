@@ -35,17 +35,41 @@ See [`PROTOCOL.md`](PROTOCOL.md) for the full `--advertise` specification.
 pip install cli-tools-kit
 ```
 
-Or pin in `requirements.txt`:
+Or pin a range in `requirements.txt`:
 
 ```
-cli-tools-kit==0.6.0
+cli-tools-kit>=1.0,<2
 ```
+
+Pin a range, not an exact version. An installer adds the kit to each tool's
+own `pip install -r requirements.txt`, and two exact pins of one package on
+one pip command line (`==0.6.0` from the tool, `==0.6.3` from the installer)
+can never resolve. Two overlapping ranges always do.
 
 The git URL form still works if you need an unreleased commit:
-`pip install git+https://github.com/Probst1nator/cli-tools-kit.git@v0.6.0`.
+`pip install git+https://github.com/Probst1nator/cli-tools-kit.git@v1.0.0`.
 
-Requires Python ≥ 3.10. Optional runtime dep: `termcolor` (colored
-install/remove output; falls back to plain text if absent).
+Requires Python ≥ 3.10 and `termcolor` (installed with the package). Linux
+and Windows are tested in CI.
+
+## Stability
+
+From 1.0.0 the kit follows [Semantic Versioning](https://semver.org/). The
+public surface is what `tests/test_public_api.py` pins: the names in
+`cli_tools_kit.__all__`, `ToolInstaller`/`ToolMetadata`/`CronInstaller` and
+their methods, `gui_installer.run()` and its keywords, `InstallHooks`,
+`sources.run_installer()`, `tui_installer.SkillTarget`, the taxonomy
+functions a tree's regroup script calls, the installer's command-line flags,
+and the `--advertise` JSON in [`PROTOCOL.md`](PROTOCOL.md).
+
+- Removing or renaming anything there is a major release.
+- A name that is going away warns for at least one minor release first.
+- The `--advertise` schema only gains optional fields; a parent installer
+  ignores fields it does not know.
+- Anything with a leading underscore, and every module-level name not listed
+  above, can change in any release.
+
+Changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
 ## Minimal example
 
@@ -219,6 +243,7 @@ Keyword-only; every argument defaults to `None`, meaning "leave the default".
 | `wm_class` | identity's | `StartupWMClass` for window-manager grouping. |
 | `notify_app` | identity's | `notify-send` application label on the `--check` path. |
 | `autostart_check_desktop_name`, `check_log_name`, `check_state_name` | identity's | Login-check artifact filenames. |
+| `hooks` | `None` | `InstallHooks(install_tool=…, remove_tool=…, install_skill=…, uninstall_skill=…)`: replace how one tool is installed, for a wrapper that builds a venv per tool. A field left `None` keeps the kit's own. |
 
 The identity is applied first and these individual names override it, so you can
 take the whole namespace from a slug and still change one thing.
@@ -323,7 +348,7 @@ and needs no network.
 Icon thumbnails need Pillow:
 
 ```bash
-pip install "cli-tools-kit[gui]==0.6.0"
+pip install "cli-tools-kit[gui]>=1.0,<2"
 ```
 
 Installing the package also exposes a `cli-tool-installer` console script.
@@ -478,9 +503,14 @@ on 3.10.
 ## Tests
 
 ```bash
-pip install -e ".[dev]"
-pytest
+pip install -e ".[dev,gui]"
+ruff check .
+pytest                # xvfb-run -a pytest on a host without a display
 ```
+
+CI runs the same on Linux and Windows for Python 3.10 to 3.13, plus an
+install from the built wheel. The GUI smoke test skips where tkinter or a
+display is missing.
 
 ## Used by
 
