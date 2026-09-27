@@ -14,8 +14,8 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install ruff
@@ -29,8 +29,8 @@ jobs:
         python: ["3.10", "3.11", "3.12", "3.13"]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: ${{ matrix.python }}
       - run: pip install -e ".[dev,gui]"
@@ -53,8 +53,8 @@ jobs:
       run:
         shell: bash
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: pip install build twine
@@ -72,6 +72,15 @@ jobs:
           "$PY" -m pip install "$(ls dist/*.whl)[gui]"
           "$PY" -c "import cli_tools_kit, cli_tools_kit.gui_installer, cli_tools_kit.sources, cli_tools_kit.tui_installer; print(cli_tools_kit.__version__)"
           "$PY" -m cli_tools_kit --help
+      # An installer runs `pip install -r <tool>/requirements.txt <its own kit pin>`.
+      # Two exact pins that differ cannot resolve; the ranges README § Install
+      # recommends must, even when the tool's lower bound is older.
+      - name: A tool's kit range and the installer's kit range resolve together
+        run: |
+          VER=$("$PY" -c "import cli_tools_kit; print(cli_tools_kit.__version__)")
+          echo "cli-tools-kit>=0.8,<2" > "$RUNNER_TEMP/tool-requirements.txt"
+          "$PY" -m pip install --dry-run --no-deps --no-index --find-links dist \
+            -r "$RUNNER_TEMP/tool-requirements.txt" "cli-tools-kit>=$VER,<2"
       # Output goes through a pipe here, so on Windows Python writes it in the
       # ANSI code page (cp1252) like it does for a real user's console log.
       - name: Example installer, headless, in a sandbox home
