@@ -347,7 +347,7 @@ def test_local_root_is_the_default_when_no_flag(tmp_path: Path, engine,
 def test_the_hook_resolves_and_refills_the_roots(tmp_path: Path, engine,
                                                  monkeypatch) -> None:
     config = _tree(tmp_path)
-    _write(config, f"""
+    _write(config, """
 [[source]]
 name = "org/tools"
 path = "."

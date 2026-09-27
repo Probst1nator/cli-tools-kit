@@ -1,8 +1,6 @@
 """Tests for the Gemini tool grouping: prompts, reply parsing, repair."""
 
 import json
-import os
-import sys
 
 import pytest
 

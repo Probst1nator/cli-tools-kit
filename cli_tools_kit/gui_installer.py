@@ -3416,7 +3416,6 @@ class InstallerApp:
                     return
 
                 model_idx = idx // samples_per_model
-                sample_num = idx % samples_per_model
                 model_name = selected_models[model_idx]
                 model_path = os.path.join(models_dir, model_name)
 

@@ -5,7 +5,7 @@ The curses drawing itself is not tested; everything below it is plain data.
 
 from __future__ import annotations
 
-from typing import List
+from typing import List, Optional
 
 import pytest
 
@@ -22,7 +22,8 @@ def _tool(name: str, skill: str = "", script: str = "") -> ToolEntry:
     )
 
 
-def _fake_host(monkeypatch: pytest.MonkeyPatch, installed: List[str], stale: List[str] = []):
+def _fake_host(monkeypatch: pytest.MonkeyPatch, installed: List[str], stale: Optional[List[str]] = None):
+    stale = stale or []
     monkeypatch.setattr(gi, "is_installed", lambda t: t.name in installed)
     monkeypatch.setattr(gi, "needs_update", lambda t: t.name in stale)
 
@@ -31,7 +32,7 @@ def _target(key: str, have: List[str]) -> tui.SkillTarget:
     return tui.SkillTarget(
         key=key, label=key,
         installed=lambda t: t.skill_name in have,
-        install=lambda t: (True, f"Run: source ~/.bashrc"),
+        install=lambda t: (True, "Run: source ~/.bashrc"),
         uninstall=lambda t: (True, ""),
     )
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 import stat
 from pathlib import Path
 
@@ -18,6 +19,8 @@ def fake_crontab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         crontab -l     → cat the file (rc=0), or rc=1 if missing
         crontab -      → read stdin, overwrite the file
     """
+    if os.name == "nt":
+        pytest.skip("crontab exists only on POSIX; CronInstaller is Linux-only")
     crontab_file = tmp_path / "user.crontab"
     shim = tmp_path / "crontab"
     shim.write_text(

@@ -157,7 +157,7 @@ def _ask(prompt: str, default: str = "") -> str:
         answer = input(f"{prompt}{suffix}: ").strip()
     except (EOFError, KeyboardInterrupt):
         print()
-        raise SystemExit(1)
+        raise SystemExit(1) from None
     return answer or default
 
 

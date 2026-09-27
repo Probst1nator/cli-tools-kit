@@ -1,7 +1,5 @@
 """Tests for the network-free capability grouping tier."""
 
-import os
-import sys
 
 from cli_tools_kit.taxonomy.capability import DEFAULT_BANDS, capability_groups
 

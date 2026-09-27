@@ -13,3 +13,5 @@ venv/
 # Claude Code
 CLAUDE.md
 .claude/
+.coverage
+coverage.xml
