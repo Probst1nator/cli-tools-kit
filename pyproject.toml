@@ -92,6 +92,6 @@ source = ["cli_tools_kit"]
 branch = true
 
 [tool.coverage.report]
-fail_under = 45
+fail_under = 50
 show_missing = false
 skip_covered = true

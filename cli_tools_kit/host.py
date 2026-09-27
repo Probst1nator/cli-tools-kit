@@ -180,8 +180,13 @@ def ensure_user_path(directory: str, reg=None) -> bool:
     the directory was already listed (or there is no registry to write).
 
     ``reg`` is the registry module to use; it defaults to ``winreg`` and is
-    what the tests replace with a fake.
+    what the tests replace with a fake. A tool's ``--install`` runs in a
+    subprocess the tests cannot hand a fake to, so ``CLI_TOOLS_KIT_SKIP_USER_PATH``
+    set to anything non-empty leaves the registry alone there; a test run must
+    not rewrite the developer's own PATH.
     """
+    if reg is None and os.environ.get("CLI_TOOLS_KIT_SKIP_USER_PATH"):
+        return False
     reg = reg if reg is not None else _default_registry()
 
     changed = False
