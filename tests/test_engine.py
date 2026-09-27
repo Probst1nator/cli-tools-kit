@@ -159,3 +159,24 @@ def test_check_reconciles_a_drifted_shortcut(engine, monkeypatch) -> None:
 
     assert engine.cli_check() == 0
     assert not engine.needs_update(tool)
+
+
+@POSIX_ONLY
+def test_a_failing_crontab_read_never_wipes_the_crontab(engine, tmp_path: Path,
+                                                        monkeypatch) -> None:
+    """crontab -l can fail for reasons other than "no crontab" (permissions, a
+    locked spool). Reading that as empty and writing back would replace the
+    user's whole crontab with one line."""
+    spool = tmp_path / "spool"
+    spool.write_text("0 3 * * * backup.sh\n")
+    shim = tmp_path / "bin" / "crontab"
+    shim.parent.mkdir()
+    shim.write_text(f'#!/bin/sh\nif [ "$1" = "-l" ]; then echo "crontab: permission denied" >&2; '
+                    f'exit 1; fi\ncat > "{spool}"\n')
+    shim.chmod(0o755)
+    monkeypatch.setenv("PATH", str(shim.parent) + os.pathsep + os.environ["PATH"])
+
+    ok, msg = engine.enable_autostart(_tools(engine)["crontool"])
+    assert not ok
+    assert "permission denied" in msg
+    assert spool.read_text() == "0 3 * * * backup.sh\n"

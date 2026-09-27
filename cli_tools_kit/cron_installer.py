@@ -36,6 +36,28 @@ except ImportError:
 _TAG_PREFIX = "# cli-tool-kit:"
 
 
+def read_crontab(binary: str = "crontab") -> str:
+    """Return current crontab contents, or '' if there is no crontab.
+
+    `crontab -l` exits 1 with "no crontab for <user>" on stderr when the
+    user simply has no crontab — that maps to ''. Other non-zero exits
+    (binary missing, permission denied, transient failure) raise
+    RuntimeError instead of being read as '', because a caller writing the
+    crontab back would then replace every existing entry with its own lines.
+    """
+    try:
+        result = subprocess.run([binary, "-l"], capture_output=True, text=True)
+    except FileNotFoundError as e:
+        raise RuntimeError(f"crontab binary not found: {binary}") from e
+    if result.returncode == 0:
+        return result.stdout
+    if "no crontab" in (result.stderr or "").lower():
+        return ""
+    raise RuntimeError(
+        f"crontab -l failed (rc={result.returncode}): {result.stderr.strip()}"
+    )
+
+
 class CronInstaller:
     """Manage a tool's cron lines via a unique marker.
 
@@ -59,28 +81,8 @@ class CronInstaller:
     # ---- crontab I/O ----
 
     def _read(self) -> str:
-        """Return current crontab contents, or '' if there is no crontab.
-
-        `crontab -l` exits 1 with "no crontab for <user>" on stderr when the
-        user simply has no crontab — that maps to ''. Other non-zero exits
-        (binary missing, permission denied, transient failure) must NOT be
-        silently coerced to '', because that would cause a subsequent
-        `install([...])` to write a fresh crontab containing only the new
-        lines, wiping any pre-existing entries.
-        """
-        try:
-            result = subprocess.run(
-                [self.CRONTAB_BIN, "-l"], capture_output=True, text=True
-            )
-        except FileNotFoundError as e:
-            raise RuntimeError(f"crontab binary not found: {self.CRONTAB_BIN}") from e
-        if result.returncode == 0:
-            return result.stdout
-        if "no crontab" in (result.stderr or "").lower():
-            return ""
-        raise RuntimeError(
-            f"crontab -l failed (rc={result.returncode}): {result.stderr.strip()}"
-        )
+        """Return current crontab contents, or '' if there is no crontab."""
+        return read_crontab(self.CRONTAB_BIN)
 
     def _write(self, content: str) -> None:
         """Replace the crontab with the given content."""

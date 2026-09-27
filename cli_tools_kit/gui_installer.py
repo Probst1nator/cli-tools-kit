@@ -60,6 +60,7 @@ except ImportError:  # pragma: no cover - exercised only where python3-tk is mis
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence
 
 from . import host
+from .cron_installer import read_crontab
 from .identity import InstallerIdentity, LEGACY_IDENTITY
 from .autostart_gate import (
     KNOWN_CONDITIONS,
@@ -1610,8 +1611,7 @@ def enable_autostart(tool: ToolEntry) -> tuple[bool, str]:
             return False, "Cron autostart is not supported on Windows"
         line = _cron_line_for_tool(tool)
         try:
-            result   = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-            existing = result.stdout if result.returncode == 0 else ""
+            existing = read_crontab()   # raises rather than read a failure as empty
             if line in existing:
                 return True, "Cron entry already present"
             new_crontab = existing.rstrip("\n") + ("\n" if existing else "") + line + "\n"
@@ -1643,10 +1643,10 @@ def disable_autostart(tool: ToolEntry) -> tuple[bool, str]:
             return False, "Cron autostart is not supported on Windows"
         line = _cron_line_for_tool(tool)
         try:
-            result = subprocess.run(["crontab", "-l"], capture_output=True, text=True)
-            if result.returncode != 0 or line not in result.stdout:
+            existing = read_crontab()
+            if line not in existing:
                 return True, "Already disabled"
-            new_crontab = "\n".join(l for l in result.stdout.splitlines() if l != line) + "\n"
+            new_crontab = "\n".join(l for l in existing.splitlines() if l != line) + "\n"
             subprocess.run(["crontab", "-"], input=new_crontab, text=True, check=True)
             return True, f"Cron entry removed: {tool.name}"
         except Exception as e:
