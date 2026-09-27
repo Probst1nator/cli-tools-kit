@@ -618,7 +618,8 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
         # Use sys.executable to ensure we use the same python environment
         result = subprocess.run(
             [sys.executable, file_path, "--advertise"],
-            capture_output=True, text=True, timeout=5
+            capture_output=True, encoding="utf-8", errors="replace", timeout=5,
+            env=host.child_env(),
         )
         if result.returncode == 0:
             data = json.loads(result.stdout)
@@ -1161,7 +1162,8 @@ def install_tool(tool: ToolEntry, skip_deps: bool = False) -> tuple[bool, str]:
         if skip_deps:
             env["TOOLS_INSTALLER_SKIP_DEPS"] = "1"
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
-                                capture_output=True, text=True, env=env)
+                                capture_output=True, encoding="utf-8", errors="replace",
+                                env=host.child_env(env))
         output = (result.stdout + result.stderr).strip()
         if result.returncode == 0:
             return True, output
@@ -1177,7 +1179,8 @@ def remove_tool(tool: ToolEntry) -> tuple[bool, str]:
         env = os.environ.copy()
         env.update(IDENTITY.env())   # remove the alias from OUR alias file
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
-                                capture_output=True, text=True, env=env)
+                                capture_output=True, encoding="utf-8", errors="replace",
+                                env=host.child_env(env))
         output = (result.stdout + result.stderr).strip()
         if result.returncode == 0:
             return True, output
@@ -1196,7 +1199,8 @@ def install_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
     try:
         cmd = [sys.executable, tool.script_path, "--install-skill"] + tool.args
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
-                                capture_output=True, text=True)
+                                capture_output=True, encoding="utf-8", errors="replace",
+                                env=host.child_env())
         output = (result.stdout + result.stderr).strip()
         if result.returncode == 0:
             return True, output
@@ -1210,7 +1214,8 @@ def uninstall_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
     try:
         cmd = [sys.executable, tool.script_path, "--uninstall-skill"] + tool.args
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
-                                capture_output=True, text=True)
+                                capture_output=True, encoding="utf-8", errors="replace",
+                                env=host.child_env())
         output = (result.stdout + result.stderr).strip()
         if result.returncode == 0:
             return True, output
@@ -6166,6 +6171,7 @@ def cli_check() -> int:
     return 0
 
 def main():
+    host.harden_stdio()
     parser = argparse.ArgumentParser(description="Tools Manager")
     parser.add_argument("--install", action="store_true", help="Install manager shortcut")
     parser.add_argument("--uninstall", action="store_true", help="Remove manager shortcut")

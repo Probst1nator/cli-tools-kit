@@ -17,9 +17,41 @@ from __future__ import annotations
 import os
 import shlex
 import subprocess
+import sys
 from typing import Iterable, Optional
 
 IS_WINDOWS = os.name == "nt"
+
+
+# --- text encoding --------------------------------------------------------------
+
+def harden_stdio(streams=None) -> None:
+    """Print a character the output cannot encode as ``?`` instead of crashing.
+
+    On Windows, output that goes to a pipe or a file is encoded in the ANSI
+    code page (cp1252), which has no ✓. ``--list`` died with
+    UnicodeEncodeError as soon as one tool was installed, whenever a script or
+    a coding agent read its output.
+    """
+    for stream in streams if streams is not None else (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is None:
+            continue
+        try:
+            reconfigure(errors="replace")
+        except (ValueError, OSError):
+            pass
+
+
+def child_env(env: Optional[dict] = None) -> dict:
+    """Environment for a tool's subprocess: its stdout and stderr in UTF-8.
+
+    The kit reads that output as UTF-8, so a tool printing an emoji no longer
+    dies under cp1252 before the kit sees a word of it.
+    """
+    env = dict(os.environ if env is None else env)
+    env["PYTHONIOENCODING"] = "utf-8"
+    return env
 
 
 # --- where the shims live -----------------------------------------------------

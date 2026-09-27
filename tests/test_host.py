@@ -191,3 +191,36 @@ def test_cli_tool_installs_shims_on_windows(sandbox_home: Path,
     installer.remove()
     assert not (shim_dir / "fake_tool.cmd").exists()
     assert not (shim_dir / "fake_tool").exists()
+
+
+# --- text encoding -----------------------------------------------------------
+
+def test_harden_stdio_turns_unencodable_output_into_question_marks() -> None:
+    """A Windows pipe is cp1252, which has no ✓; --list used to die on it."""
+    import io
+
+    raw = io.BytesIO()
+    stream = io.TextIOWrapper(raw, encoding="cp1252", newline="\n")
+    host.harden_stdio([stream])
+    print(" [✓] Greeter", file=stream)
+    stream.flush()
+    assert raw.getvalue() == b" [?] Greeter\n"
+
+
+def test_tool_output_reaches_the_kit_whatever_the_parent_encoding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A tool printing an emoji must not die in its own print, and the kit
+    must read the text back intact. PYTHONIOENCODING=cp1252 stands in for a
+    Windows pipe on any host."""
+    import cli_tools_kit.gui_installer as gi
+
+    script = tmp_path / "tool" / "main.py"
+    script.parent.mkdir()
+    script.write_text("import sys\nprint('✅ installed')\nsys.exit(0)\n", encoding="utf-8")
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    tool = gi.ToolEntry(name="Tool", desktop_file="tool.desktop", script_path=str(script),
+                        args=[], icon="", description="", terminal=False, category="")
+    ok, output = gi.install_tool(tool, skip_deps=True)
+    assert ok, output
+    assert output == "✅ installed"
