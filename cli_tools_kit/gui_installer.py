@@ -4697,7 +4697,7 @@ class InstallerApp:
             autostart_var.trace_add("write", self._on_checkbox_changed)
             # A tool with conditions gets the checkbox and a ⚙ side by side;
             # without them the checkbox stays centred as before.
-            if tool.autostart_conditions:
+            if parent.autostart_conditions:
                 holder = ttk.Frame(autostart_frame, style="Card.TFrame")
                 holder.pack(expand=True)
                 autostart_cb = ttk.Checkbutton(holder, variable=autostart_var, style="Card.TCheckbutton")
