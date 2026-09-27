@@ -1224,6 +1224,35 @@ def uninstall_skill_for_tool(tool: ToolEntry) -> tuple[bool, str]:
         return False, str(e)
 
 
+class InstallHooks(NamedTuple):
+    """Replacements for the four actions the engine takes on one tool.
+
+    Pass one to ``run(hooks=...)`` (or ``sources.run_installer``). A field left
+    ``None`` keeps the kit's own function. Each hook takes the ToolEntry, plus
+    ``skip_deps`` for ``install_tool``, and returns ``(ok, output)``.
+
+    Before 1.0, wrappers assigned ``gui_installer.install_tool = ...``
+    directly. That still works in 1.x, but this is the supported way.
+    """
+    install_tool: Optional[Callable[..., tuple]] = None
+    remove_tool: Optional[Callable[[ToolEntry], tuple]] = None
+    install_skill: Optional[Callable[[ToolEntry], tuple]] = None
+    uninstall_skill: Optional[Callable[[ToolEntry], tuple]] = None
+
+
+def _apply_hooks(hooks: InstallHooks) -> None:
+    """Rebind the module functions every screen looks up at call time."""
+    global install_tool, remove_tool, install_skill_for_tool, uninstall_skill_for_tool
+    if hooks.install_tool is not None:
+        install_tool = hooks.install_tool
+    if hooks.remove_tool is not None:
+        remove_tool = hooks.remove_tool
+    if hooks.install_skill is not None:
+        install_skill_for_tool = hooks.install_skill
+    if hooks.uninstall_skill is not None:
+        uninstall_skill_for_tool = hooks.uninstall_skill
+
+
 def refresh_desktop_database():
     if host.IS_WINDOWS:
         return
@@ -6297,7 +6326,8 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         check_log_name: Optional[str] = None, check_state_name: Optional[str] = None,
         self_desktop_file: Optional[str] = None, self_desktop_name: Optional[str] = None,
         self_desktop_icon: Optional[str] = None,
-        wm_class: Optional[str] = None, notify_app: Optional[str] = None) -> None:
+        wm_class: Optional[str] = None, notify_app: Optional[str] = None,
+        hooks: Optional[InstallHooks] = None) -> None:
     """Configure the engine from a thin wrapper and dispatch the standard CLI/GUI.
 
     Every argument maps to a module-level config global; ``None`` leaves the
@@ -6311,6 +6341,9 @@ def run(*, identity: Optional[InstallerIdentity] = None,
     manager's own .desktop, the WM class and the Keywords marker the orphan
     sweeper matches on) so two organisations' installers coexist. Passing none
     selects ``LEGACY_IDENTITY``, the historical first-party names.
+
+    ``hooks`` replaces how one tool is installed, removed or given its skill,
+    for a wrapper that builds a venv per tool itself. See :class:`InstallHooks`.
 
     ``prune`` adds directory names the default wider walk never enters, on top
     of ``DISCOVERY_PRUNE``. It does nothing when a wrapper passes its own
@@ -6377,6 +6410,8 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         WM_CLASS = wm_class
     if notify_app is not None:
         NOTIFY_APP = notify_app
+    if hooks is not None:
+        _apply_hooks(hooks)
 
     _load_env()                 # re-read ROOT_DIR/.env now that ROOT_DIR is final
     _recompute_check_paths()    # re-derive login-check artifact paths from the names
