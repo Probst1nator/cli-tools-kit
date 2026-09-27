@@ -19,6 +19,7 @@ Stability for what counts as the public surface.
   `--advertise` answer follows PROTOCOL.md.
 - CI on GitHub Actions: ruff, pytest on Linux and Windows for Python 3.10 to
   3.13, a GUI smoke test under xvfb, and an install from the built wheel.
+- `--apply` also takes names separated by spaces: `--apply a b`.
 
 ### Changed
 - The engine is split out of `gui_installer` into `state`, `settings`,
@@ -28,6 +29,10 @@ Stability for what counts as the public surface.
   rest works as before.
 
 ### Fixed
+- `--update-all` and `--cleanup --yes` exited 0 when a tool or an orphan
+  failed. They now exit 1, like `--apply`.
+- A tool's skill was written even when the tool itself failed to install in
+  the same run. It is now skipped, with a line saying so.
 - Enabling a cron autostart while `crontab -l` failed (permissions, a locked
   spool) replaced the whole crontab with that one line. It now fails instead.
 - Windows: `--list` crashed with UnicodeEncodeError once a tool was installed,

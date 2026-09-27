@@ -160,18 +160,20 @@ def cli_uninstall_all(tools: List[discovery.ToolEntry]):
     print(f"\nDone. Removed {removed} shortcuts.\n")
 
 
-def cli_cleanup(dry_run: bool = False):
+def cli_cleanup(dry_run: bool = False) -> int:
     """Find and remove orphaned desktop files and aliases.
 
     Args:
         dry_run: If True, only list orphans without removing them.
+
+    Returns the number of orphans that could not be removed.
     """
     orphan_desktops = sweep.find_orphan_desktop_files()
     orphan_aliases = sweep.find_orphan_aliases()
 
     if not orphan_desktops and not orphan_aliases:
         print("\nNo orphaned shortcuts found. All clean!\n")
-        return
+        return 0
 
     print(f"\nFound {len(orphan_desktops)} orphaned desktop file(s), {len(orphan_aliases)} orphaned alias(es):\n")
 
@@ -190,7 +192,7 @@ def cli_cleanup(dry_run: bool = False):
 
     if dry_run:
         print("\n(Dry run - no changes made. Use --cleanup --yes to remove.)\n")
-        return
+        return 0
 
     print()
     removed = 0
@@ -221,10 +223,14 @@ def cli_cleanup(dry_run: bool = False):
     if errors:
         summary += f", {errors} error(s)"
     print(summary + ".\n")
+    return errors
 
 
-def cli_update_all(tools: List[discovery.ToolEntry]):
-    """Sync: clean up orphans, then reinstall manager and all installed tool shortcuts."""
+def cli_update_all(tools: List[discovery.ToolEntry]) -> int:
+    """Sync: clean up orphans, then reinstall manager and all installed tool shortcuts.
+
+    Returns the number of steps that failed.
+    """
     removed = 0
     updated = 0
     errors = 0
@@ -296,6 +302,7 @@ def cli_update_all(tools: List[discovery.ToolEntry]):
 
     summary = "\nDone. " + ", ".join(summary_parts) if summary_parts else "\nDone."
     print(summary + ".\n")
+    return errors
 
 
 def cli_check() -> int:
@@ -435,10 +442,10 @@ def main():
     parser.add_argument("--refresh", action="store_true",
                         help="Before discovery, run the configured PRE_DISCOVERY hook in refresh "
                              "mode (e.g. ff-only pull every known repo checkout). No-op without a hook.")
-    parser.add_argument("--apply", metavar="NAMES",
-                        help="Headless install: a comma-separated list of tool aliases/names, "
-                             "or 'all'. Tools not listed are left alone. Skills go to the "
-                             "targets in --skill-target.")
+    parser.add_argument("--apply", metavar="NAMES", nargs="+",
+                        help="Headless install: tool aliases/names, separated by commas "
+                             "or spaces, or 'all'. Tools not listed are left alone. Skills "
+                             "go to the targets in --skill-target.")
     parser.add_argument("--skill-target", metavar="KEYS", default="claude",
                         help="With --apply: comma-separated skill target keys "
                              "(default 'claude'; 'none' installs no skills).")
@@ -476,8 +483,7 @@ def main():
         return
 
     if args.cleanup:
-        cli_cleanup(dry_run=not args.yes)
-        return
+        sys.exit(1 if cli_cleanup(dry_run=not args.yes) else 0)
 
     tools = discovery.discover_tools()
 
@@ -486,12 +492,11 @@ def main():
         return
 
     if args.update_all:
-        cli_update_all(tools)
-        return
+        sys.exit(1 if cli_update_all(tools) else 0)
 
     if args.apply:
         from . import tui_installer
-        sys.exit(tui_installer.apply_headless(tools, args.apply, args.skill_target,
+        sys.exit(tui_installer.apply_headless(tools, ",".join(args.apply), args.skill_target,
                                               targets=state.SKILL_TARGETS))
 
     if args.list:

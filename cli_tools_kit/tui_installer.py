@@ -170,8 +170,13 @@ def execute(steps: List[Step], log: Callable[[str], None]) -> Dict[str, object]:
     """Run the steps, logging one line per action plus the tool's own output."""
     counts: Counter = Counter()
     hint = None
+    failed: Set[str] = set()   # script paths whose install or update failed
     for step in steps:
         tool, target = step.tool, step.target
+        if step.kind == "skill_install" and tool.script_path in failed:
+            # A skill tells the agent to run the tool; without the tool it misleads.
+            log(f"Skill {tool.skill_name} skipped: {tool.name} did not install")
+            continue
         if step.kind == "install":
             log(f"Installing {tool.name}")
             ok, out = gi.install_tool(tool)
@@ -199,6 +204,8 @@ def execute(steps: List[Step], log: Callable[[str], None]) -> Dict[str, object]:
         else:  # pragma: no cover - plan() never emits anything else
             continue
         counts[step.kind if ok else "errors"] += 1
+        if not ok and step.kind in ("install", "update"):
+            failed.add(tool.script_path)
         log(f"  {'ok' if ok else 'FAILED'}")
         for line in (out or "").splitlines():
             log(f"    {line}")

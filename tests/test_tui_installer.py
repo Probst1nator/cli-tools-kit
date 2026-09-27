@@ -131,6 +131,25 @@ def test_execute_counts_and_hint(monkeypatch: pytest.MonkeyPatch) -> None:
     assert tui.summary(result) == "1 installed, 1 skills written, 1 errors"
 
 
+def test_execute_writes_no_skill_for_a_tool_that_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gi, "install_tool",
+                        lambda t, skip_deps=False: (t.name != "bad", "" if t.name != "bad" else "boom"))
+    monkeypatch.setattr(gi, "refresh_desktop_database", lambda: None)
+    written: List[str] = []
+    target = tui.SkillTarget(key="claude", label="claude", installed=lambda t: False,
+                             install=lambda t: (written.append(t.name), (True, ""))[1],
+                             uninstall=lambda t: (True, ""))
+    steps = [tui.Step("install", _tool("bad", skill="bad")),
+             tui.Step("install", _tool("good", skill="good")),
+             tui.Step("skill_install", _tool("bad", skill="bad"), target),
+             tui.Step("skill_install", _tool("good", skill="good"), target)]
+    log: List[str] = []
+    result = tui.execute(steps, log.append)
+    assert written == ["good"]
+    assert result["errors"] == 1 and result["skill_install"] == 1
+    assert "Skill bad skipped: bad did not install" in log
+
+
 # --- apply_headless ---------------------------------------------------------
 
 def test_apply_headless_installs_named_tools(monkeypatch: pytest.MonkeyPatch, capsys) -> None:
