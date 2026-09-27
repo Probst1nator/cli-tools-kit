@@ -9,8 +9,8 @@ import subprocess
 import sys
 from typing import Callable, NamedTuple, Optional
 
-from . import host
 from . import discovery
+from . import host
 from . import state
 
 
