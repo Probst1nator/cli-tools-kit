@@ -1,5 +1,4 @@
-"""Starting tools at login (autostart entry or cron) and the login update check.
-"""
+"""Starting tools at login (autostart entry or cron) and the login update check."""
 
 from __future__ import annotations
 

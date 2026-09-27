@@ -1,5 +1,4 @@
-"""The installer's own settings file: auto-update, custom icons, icon generation.
-"""
+"""The installer's own settings file: auto-update, custom icons, icon generation."""
 
 from __future__ import annotations
 

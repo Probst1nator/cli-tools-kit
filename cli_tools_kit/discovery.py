@@ -1,5 +1,4 @@
-"""Finding the tools in a tree and reading their ``--advertise`` metadata.
-"""
+"""Finding the tools in a tree and reading their ``--advertise`` metadata."""
 
 from __future__ import annotations
 

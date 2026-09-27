@@ -1,5 +1,4 @@
-"""Shortcuts and aliases whose tool is gone.
-"""
+"""Shortcuts and aliases whose tool is gone."""
 
 from __future__ import annotations
 

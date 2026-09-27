@@ -1,5 +1,4 @@
-"""Installing and removing one tool: shortcut or alias, and its Claude skill.
-"""
+"""Installing and removing one tool: shortcut or alias, and its Claude skill."""
 
 from __future__ import annotations
 

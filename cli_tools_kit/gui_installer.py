@@ -8,8 +8,8 @@ offers batch management of their desktop shortcuts / bash aliases / skills.
 This module used to live as ``tools/installer.py``; it was lifted into
 cli-tools-kit so multiple project trees can share one full-featured GUI instead
 of each maintaining a forked copy. It is driven entirely by module-level
-configuration (see the CONFIGURATION block below) which a thin wrapper sets via
-``run(...)`` before launching:
+configuration (``state.py``) which a thin wrapper sets via ``run(...)`` before
+launching:
 
     # tools/installer.py
     from cli_tools_kit import gui_installer as gi
@@ -28,6 +28,12 @@ console script) it scans the current working directory with the default
 ``discoverer`` hook, and ``group_by`` chooses whether the GUI bands rows by the
 advertised ``capability`` (default) or by the ``category`` the discoverer
 assigned.
+
+The engine behind the window lives in its own modules: ``state`` (the
+configuration above), ``settings``, ``discovery``, ``install``, ``sweep``
+(orphans), ``autostart``, ``icons`` and ``cli`` (``main``, ``run``). This module
+holds the tkinter window, ``InstallerApp``, and still answers for every name
+that moved, so ``gi.IDENTITY`` and ``gi.install_tool = ...`` keep working.
 """
 
 # Annotations are deferred so the module imports without Pillow. Several
@@ -77,7 +83,7 @@ except ImportError:
     GeminiClient = None
     ModelTier = None
 
-# ================= CONFIGURATION =================
+# ================= LAYOUT =================
 
 DEBUG_LAYOUT = False  # Set to True to color-code layout frames for debugging
 

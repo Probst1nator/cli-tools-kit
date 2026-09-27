@@ -20,6 +20,13 @@ Stability for what counts as the public surface.
 - CI on GitHub Actions: ruff, pytest on Linux and Windows for Python 3.10 to
   3.13, a GUI smoke test under xvfb, and an install from the built wheel.
 
+### Changed
+- The engine is split out of `gui_installer` into `state`, `settings`,
+  `discovery`, `install`, `sweep`, `autostart`, `icons` and `cli`.
+  `gui_installer` keeps the window and forwards every moved name, so reading
+  or assigning `gui_installer.IDENTITY`, `gui_installer.install_tool` and the
+  rest works as before.
+
 ### Fixed
 - Enabling a cron autostart while `crontab -l` failed (permissions, a locked
   spool) replaced the whole crontab with that one line. It now fails instead.
