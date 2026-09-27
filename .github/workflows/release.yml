@@ -1,0 +1,50 @@
+name: Release
+
+# Pushing a tag vX.Y.Z publishes that version to PyPI, after the whole CI
+# matrix has passed on the tagged commit. The upload uses PyPI Trusted
+# Publishing: PyPI trusts this workflow in this repo, so no token is stored.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: The tag names the package version, and the changelog has it
+        run: |
+          VER=$(sed -n 's/^__version__ = "\(.*\)"$/\1/p' cli_tools_kit/__init__.py)
+          if [ "v$VER" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match __version__ $VER"
+            exit 1
+          fi
+          if ! grep -q "^## \[$VER\] - " CHANGELOG.md; then
+            echo "::error::CHANGELOG.md has no '## [$VER] - <date>' section"
+            exit 1
+          fi
+
+  ci:
+    needs: verify
+    uses: ./.github/workflows/ci.yml
+
+  publish:
+    needs: ci
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/cli-tools-kit/
+    permissions:
+      id-token: write   # the OIDC token PyPI exchanges for an upload grant
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - run: pip install build twine
+      - run: python -m build
+      - run: twine check dist/*
+      - uses: pypa/gh-action-pypi-publish@release/v1
