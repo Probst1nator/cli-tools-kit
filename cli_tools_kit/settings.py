@@ -1,4 +1,4 @@
-"""The installer's own settings file: auto-update, custom icons, icon generation."""
+"""The installer's own settings file: theme, custom icons, icon generation."""
 
 from __future__ import annotations
 
@@ -23,20 +23,6 @@ def save_config(config: dict):
     os.makedirs(state.CONFIG_DIR, exist_ok=True)
     with open(state.CONFIG_FILE, "w") as f:
         json.dump(config, f)
-
-
-def get_auto_update_on_startup() -> bool:
-    """Whether this GUI should silently apply pending local updates the next
-    time it launches (the "Auto-update on startup" checkbox next to the
-    Up-to-date badge)."""
-    return bool(load_config().get("auto_update_on_startup", False))
-
-
-def set_auto_update_on_startup(enabled: bool):
-    """Persist the 'Auto-update on startup' checkbox state."""
-    config = load_config()
-    config["auto_update_on_startup"] = enabled
-    save_config(config)
 
 
 def get_custom_icon_path(tool_key: str) -> Optional[str]:

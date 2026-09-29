@@ -299,9 +299,9 @@ class InstallerApp:
         if self.orphan_desktops or self.orphan_aliases:
             self.root.after(100, self._show_orphan_warning)
 
-        # Opt-in: silently apply pending local updates on this launch, visibly
-        # logged (see _maybe_auto_update_on_startup). Runs after the orphan
-        # warning so the two don't fight over the log/dialog at the same tick.
+        # Apply pending local updates on this launch, visibly logged (see
+        # _maybe_auto_update_on_startup). Runs after the orphan warning so the
+        # two don't fight over the log/dialog at the same tick.
         self.root.after(200, self._maybe_auto_update_on_startup)
 
         # Newer installer, tool repos or kit: asks git and pip off the main
@@ -991,30 +991,11 @@ class InstallerApp:
         self._apply_btn.pack(side="right", padx=5)
         self._apply_highlighted = False
         self._op_in_progress = False  # guards against overlapping bulk operations
-        ttk.Button(footer, text="Refresh Status", command=self._update_status_labels).pack(side="right", padx=5)
 
         ttk.Button(footer, text="Select All", command=self._select_all).pack(side="left", padx=5)
         ttk.Button(footer, text="Select None", command=self._select_none).pack(side="left", padx=5)
 
         ttk.Separator(footer, orient="vertical").pack(side="left", fill="y", padx=15)
-
-        # Auto-update-on-startup toggle: persists to config.json so that the
-        # NEXT launch of this GUI silently applies any pending local updates —
-        # the same network-free reconciliation as clicking the badge to its
-        # right — logging what it did to the Operation Log so it stays visible
-        # even though it ran automatically. Sits immediately left of the badge.
-        self._auto_update_startup_var = tk.BooleanVar(value=settings.get_auto_update_on_startup())
-        auto_update_cb = ttk.Checkbutton(
-            footer, variable=self._auto_update_startup_var,
-            command=self._toggle_auto_update_startup)
-        auto_update_cb.pack(side="left", padx=(5, 2))
-        self._attach_tooltip(
-            auto_update_cb,
-            "Auto-update on startup\n\n"
-            "When checked, the next time this installer GUI starts it "
-            "automatically applies any pending local updates (the same "
-            "network-free shortcut/alias refresh as clicking the badge to "
-            "the right) and logs what it did to the Operation Log below.")
 
         # Stale-shortcut indicator (the "Update all" replacement): a count badge —
         # an "N updates pending" pill that falls back to a muted "Up to date", with a
@@ -1035,8 +1016,6 @@ class InstallerApp:
             "launch with a missing-module error.\n\n"
             "Unlike the update badge (local shortcut refresh, no network), this "
             "reaches the internet and confirms before running.")
-
-        ttk.Separator(footer, orient="vertical").pack(side="left", fill="y", padx=15)
 
         # Collapsible Log Area
         self.log_expanded = tk.BooleanVar(value=False)
@@ -3912,25 +3891,15 @@ class InstallerApp:
         """
         self._bulk_reinstall(skip_deps=True, only_stale=True)
 
-    def _toggle_auto_update_startup(self):
-        """Persist the 'Auto-update on startup' checkbox to config.json."""
-        settings.set_auto_update_on_startup(self._auto_update_startup_var.get())
-
     def _maybe_auto_update_on_startup(self):
-        """Run once per GUI launch, after the initial status scan. If the user
-        has opted in via the startup checkbox, silently apply the same
-        network-free reconciliation the Up-to-date badge offers — but log every
-        step to the Operation Log (auto-expanding it) so the automatic run
-        stays visible rather than happening silently in the background."""
-        if not self._auto_update_startup_var.get():
+        """Run once per GUI launch, after the initial status scan: apply the
+        network-free reconciliation the Up-to-date badge offers. The log opens
+        only when there is something to apply."""
+        if not self._stale_cache:
             return
         self._toggle_log(force_expand=True)
-        self._log("Auto-update on startup is enabled — checking for pending updates...", "header")
-        if self._stale_cache:
-            self._log(f"Found {len(self._stale_cache)} pending update(s) — applying automatically...", "info")
-            self._update_all()
-        else:
-            self._log("Already up to date — nothing to do.", "success")
+        self._log(f"Applying {len(self._stale_cache)} pending local update(s) on startup...", "header")
+        self._update_all()
 
     # --- upgrades -----------------------------------------------------------------
 

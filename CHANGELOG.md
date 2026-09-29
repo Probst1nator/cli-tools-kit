@@ -7,6 +7,19 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-29
+
+### Changed
+- The window applies pending local updates (drifted shortcuts and aliases, no
+  pip, no network) at every start. It used to do that only with "Auto-update on
+  startup" ticked. The Operation Log opens only when something was applied.
+
+### Removed
+- The "Auto-update on startup" checkbox, the "Refresh Status" button and the
+  separator that stood before it. `settings.get_auto_update_on_startup` and
+  `settings.set_auto_update_on_startup` are gone with the checkbox; the
+  `auto_update_on_startup` key in an existing settings file is ignored.
+
 ## [1.2.0] - 2026-09-29
 
 ### Removed
