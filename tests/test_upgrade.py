@@ -119,6 +119,34 @@ def test_the_installer_checkout_is_checked_and_its_tools_reinstalled(
     assert any("cli-tools-kit left as it is: not under test" in line for line in lines)
 
 
+@pytest.mark.parametrize("pinned, pip_runs", [("0.7.1", False), (None, False), ("99.0.0", True)])
+def test_a_pulled_installer_never_downgrades_the_kit(
+        remote, monkeypatch: pytest.MonkeyPatch, pinned, pip_runs) -> None:
+    clone, push = remote
+    state.ENTRY_SCRIPT = str(clone / "installer.py")
+    push()
+    items = upgrade.check(force=True)
+    # pinned None: the installer's pin matches the running kit exactly.
+    monkeypatch.setattr(upgrade, "kit_blocker", lambda: None)
+    monkeypatch.setattr(upgrade, "latest_kit", lambda: pinned or upgrade.kit_version())
+    pip_calls = []
+    real_run = upgrade.subprocess.run
+
+    def run(cmd, **kwargs):
+        if "pip" in cmd:
+            pip_calls.append(cmd)
+            return _Result(0, "")
+        return real_run(cmd, **kwargs)
+
+    monkeypatch.setattr(upgrade.subprocess, "run", run)
+    lines = []
+    result = upgrade.upgrade(items, [], lambda msg, tag="info": lines.append(msg))
+    assert result == {"changed": True, "errors": 0}
+    assert bool(pip_calls) == pip_runs
+    if not pip_runs:
+        assert any("stays at" in line for line in lines)
+
+
 def test_a_pull_that_cannot_fast_forward_is_an_error(remote) -> None:
     clone, push = remote
     state.UPGRADE_REPOS = [("tools", str(clone))]

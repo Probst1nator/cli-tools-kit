@@ -246,7 +246,8 @@ def upgrade(items: Sequence[Item], tools: Sequence[discovery.ToolEntry],
     (through ``install.install_tool``, so a wrapper's hooks apply), because its
     code and its requirements may have changed. The kit is upgraded when it is
     in ``items`` or the installer's own checkout was pulled, since that can
-    change the installer's pin.
+    change the installer's pin. It is never replaced by an older version, even
+    when the pulled installer still pins one.
 
     Returns ``{"changed": bool, "errors": int}``. ``changed`` means the running
     installer is out of date and should restart.
@@ -269,10 +270,20 @@ def upgrade(items: Sequence[Item], tools: Sequence[discovery.ToolEntry],
     installer_pulled = any(i.kind == "installer" and i.path in pulled for i in items)
     if any(i.kind == "kit" for i in items) or installer_pulled:
         blocker = kit_blocker()
+        # Ask again after the pull: an installer that still pins an older kit
+        # exactly would otherwise make pip downgrade the one running now.
+        latest = None if blocker else latest_kit()
+        current = kit_version()
         if blocker:
             log(f"cli-tools-kit left as it is: {blocker}", "info")
+        elif latest is None:
+            errors += 1
+            log("  ✗ pip could not say which cli-tools-kit the installer asks for", "error")
+        elif _version_key(latest) <= _version_key(current):
+            log(f"cli-tools-kit stays at {current}: nothing newer within the "
+                "installer's pin", "info")
         else:
-            log("Upgrading cli-tools-kit", "header")
+            log(f"Upgrading cli-tools-kit {current} → {latest}", "header")
             cmd = [sys.executable, "-m", "pip", "install", "--upgrade",
                    "--disable-pip-version-check", *kit_requirement()]
             try:

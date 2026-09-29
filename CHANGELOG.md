@@ -7,6 +7,14 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.1.1] - 2026-09-29
+
+### Fixed
+- Upgrade: after pulling the installer's own checkout, the kit step ran
+  `pip install --upgrade -r requirements.txt` even when that file still pinned
+  an older kit exactly, so the upgrade downgraded the kit it ran on. It now asks
+  pip first and leaves the kit alone unless the pin allows a newer version.
+
 ## [1.1.0] - 2026-09-29
 
 ### Added
