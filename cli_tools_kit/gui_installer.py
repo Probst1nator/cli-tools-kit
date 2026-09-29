@@ -98,6 +98,18 @@ RIGHT_COLS = (
     ("autostart", 85),
 )
 
+# The texts each right-hand column shows. A column is made wide enough for its
+# longest text in the current font, so "✗ Not installed" is not cut off when
+# the display scaling makes the font larger than the widths above assume.
+_COLUMN_TEXTS = {
+    "uses": ("Uses", "9999"),
+    "status": ("Status", "✓ Installed", "✗ Not installed", "⟳ Needs Update",
+               "⟳ Skill update", "⟳ Update + skill"),
+    "skill": ("Skill",),
+    "icon": ("Icon",),
+    "autostart": ("Auto-Start",),
+}
+
 _DEBUG_CELL_COLORS = {
     "uses": "#00ffff",
     "status": "#0000ff",
@@ -272,6 +284,8 @@ class InstallerApp:
         self.orphan_desktops = sweep.find_orphan_desktop_files()
         self.orphan_aliases = sweep.find_orphan_aliases()
 
+        self._col_widths = self._column_widths()
+        self._wrap_held = False   # see _position_window
         self._setup_ui()
         self._position_window()
         self.root.deiconify()  # Show now that it's properly sized
@@ -314,6 +328,22 @@ class InstallerApp:
         except Exception:
             pass  # cosmetic only; never block startup over a bad/unsupported icon
 
+    def _column_widths(self) -> Dict[str, int]:
+        """RIGHT_COLS widths, scaled with the display and fitted to their texts.
+
+        The pixel widths in RIGHT_COLS were chosen at Tk's 96 dpi scaling.
+        They grow with the scaling and never drop below what the column's
+        longest text needs in the default font.
+        """
+        from tkinter import font as tkfont  # noqa: PLC0415 — tkinter is optional at import
+        font = tkfont.nametofont("TkDefaultFont")
+        scale = max(1.0, float(self.root.tk.call("tk", "scaling")) / (96 / 72))
+        widths = {}
+        for key, base in RIGHT_COLS:
+            text = max((font.measure(t) for t in _COLUMN_TEXTS.get(key, ())), default=0)
+            widths[key] = max(round(base * scale), text + 16)
+        return widths
+
     def _get_primary_monitor_geometry(self) -> tuple[int, int, int, int]:
         """Get primary monitor geometry (x, y, width, height). Falls back to tkinter defaults."""
         try:
@@ -338,41 +368,54 @@ class InstallerApp:
         return 0, 0, self.root.winfo_screenwidth(), self.root.winfo_screenheight()
 
     def _position_window(self):
-        """Position window: fit to content if possible, otherwise use full screen height with scrollbar."""
+        """Size the window to what every row asks for, within the monitor.
+
+        The width is the widest of the title row, the footer and the tool
+        table. The height is the fixed rows plus the table, measured after the
+        width is set, because tool descriptions wrap to the width and a wider
+        table is shorter. Both stay within 90% of the monitor, which leaves
+        room for panels and the title bar; beyond that the table scrolls. The
+        minimum size keeps the footer's buttons from being cut off.
+        """
+        self.root.update_idletasks()
+        mon_x, mon_y, mon_width, mon_height = self._get_primary_monitor_geometry()
+        avail_w, avail_h = int(mon_width * 0.9), int(mon_height * 0.9)
+
+        # The root's request covers the title, search and footer rows; the table
+        # sits in a canvas and is not part of it. The table's own request is no
+        # use either: until the window is drawn every description asks for one
+        # long line. So the table counts with its fixed columns plus room for
+        # the tool names.
+        scale = max(1.0, float(self.root.tk.call("tk", "scaling")) / (96 / 72))
+        scrollbar_w = self.scrollbar.winfo_reqwidth()
+        fixed_cols = sum(self._col_widths.values()) + len(RIGHT_COLS)
+        overhead = 40 + scrollbar_w + sum(TABLE_PADX) + fixed_cols + 70   # padding, checkbox
+        rows_w = self.root.winfo_reqwidth()
+        window_width = min(max(rows_w, overhead + round(300 * scale)), avail_w)
+
+        # Wrap the descriptions for that width before measuring the height.
+        # Their <Configure> handlers are held meanwhile: while the window is
+        # hidden they see the table's narrow first layout and wrap at 100 px.
+        # Once it is shown they set the exact wrap.
+        self._wrap_held = True
+        for label in self._desc_labels:
+            label.configure(wraplength=max(100, window_width - overhead))
         self.root.update_idletasks()
 
-        mon_x, mon_y, mon_width, mon_height = self._get_primary_monitor_geometry()
-
-        # Get actual content dimensions
-        scrollable_height = self.scrollable_frame.winfo_reqheight()
-        content_width = self.scrollable_frame.winfo_reqwidth() + 60  # padding
-        # Add height for title (~60), footer (~60), log header (~40), status bar (~30), padding (~40)
-        non_scrollable_height = 230
-        content_height = scrollable_height + non_scrollable_height
-
-        # Clamp width to reasonable bounds (max 800 for usability)
-        window_width = max(500, min(content_width, 800, mon_width - 100))
-
-        # Use content height if it fits, otherwise use full monitor height
-        if content_height <= mon_height:
-            window_height = content_height
-            # Center vertically on primary monitor
-            y = mon_y + (mon_height - window_height) // 2
-            # Hide scrollbar initially - content fits
-            self.scrollbar.grid_forget()
-        else:
-            # Use full monitor height, align to top
-            window_height = mon_height
-            y = mon_y
-            # Show scrollbar initially - content exceeds screen
+        fixed_h = self.root.winfo_reqheight() - self.outer_frame.winfo_reqheight()
+        content_h = fixed_h + self.scrollable_frame.winfo_reqheight()
+        window_height = min(content_h, avail_h)
+        if content_h > avail_h:
             self.scrollbar.grid(row=0, column=1, sticky="ns")
+        else:
+            self.scrollbar.grid_forget()
 
-        # Center horizontally on primary monitor
         x = mon_x + (mon_width - window_width) // 2
-
+        y = mon_y + (mon_height - window_height) // 2
         self.root.geometry(f"{window_width}x{window_height}+{x}+{y}")
-        # Allow resizing in both directions
+        self.root.minsize(min(rows_w, avail_w), min(fixed_h + 150, window_height))
         self.root.resizable(True, True)
+        self._wrap_held = False
 
         # Always enable mouse wheel scrolling
         self._bind_mousewheel()
@@ -868,6 +911,7 @@ class InstallerApp:
         for group_label in sorted(tools_by_group):
             categories[group_label] = discovery.group_tools(tools_by_group[group_label])
 
+        self._desc_labels: List[ttk.Label] = []  # wrapped to the width in _position_window
         self.expand_vars: Dict[str, tk.BooleanVar] = {}  # Track expanded state
         self.children_frames: Dict[str, ttk.Frame] = {}  # Track child frames for show/hide
 
@@ -926,6 +970,14 @@ class InstallerApp:
         # Footer / Buttons
         footer = ttk.Frame(main_container, padding=(0, 20, 0, 0))
         footer.grid(row=3, column=0, sticky="ew")
+
+        # Packed first: when the window is narrower than the footer, pack takes
+        # the space from the widgets packed last, so Apply stays visible.
+        self._apply_btn = ttk.Button(footer, text="Apply Changes", style="Accent.TButton", command=self._apply_changes)
+        self._apply_btn.pack(side="right", padx=5)
+        self._apply_highlighted = False
+        self._op_in_progress = False  # guards against overlapping bulk operations
+        ttk.Button(footer, text="Refresh Status", command=self._update_status_labels).pack(side="right", padx=5)
 
         ttk.Button(footer, text="Select All", command=self._select_all).pack(side="left", padx=5)
         ttk.Button(footer, text="Select None", command=self._select_none).pack(side="left", padx=5)
@@ -992,12 +1044,6 @@ class InstallerApp:
             "reaches the internet and confirms before running.")
 
         ttk.Separator(footer, orient="vertical").pack(side="left", fill="y", padx=15)
-
-        self._apply_btn = ttk.Button(footer, text="Apply Changes", style="Accent.TButton", command=self._apply_changes)
-        self._apply_btn.pack(side="right", padx=5)
-        self._apply_highlighted = False
-        self._op_in_progress = False  # guards against overlapping bulk operations
-        ttk.Button(footer, text="Refresh Status", command=self._update_status_labels).pack(side="right", padx=5)
 
         # Collapsible Log Area
         self.log_expanded = tk.BooleanVar(value=False)
@@ -2700,7 +2746,8 @@ class InstallerApp:
         height=24 is only a floor for the header row, whose labels are short).
         """
         cells: Dict[str, tk.Frame] = {}
-        for col_key, width in RIGHT_COLS:
+        for col_key, _ in RIGHT_COLS:
+            width = self._col_widths[col_key]
             sep = tk.Frame(container, width=1, bg=self.theme["border"],
                            highlightthickness=0)
             sep.pack(side="left", fill="y")
@@ -2840,9 +2887,11 @@ class InstallerApp:
         desc_text = self._format_desc_with_alias(tool)
         desc_label = ttk.Label(info_frame, text=desc_text, style="CardMuted.TLabel", font=("", 9))
         desc_label.pack(anchor="w", fill="x")
+        self._desc_labels.append(desc_label)
         # Dynamic wraplength based on available width
         def update_wrap(event, lbl=desc_label):
-            lbl.configure(wraplength=max(100, event.width - 10))
+            if not self._wrap_held:
+                lbl.configure(wraplength=max(100, event.width - 10))
         info_frame.bind("<Configure>", update_wrap)
 
     def _render_tool_group(self, group: discovery.ToolGroup, current_row: int) -> int:
@@ -2985,9 +3034,11 @@ class InstallerApp:
         desc_text = self._format_desc_with_alias(parent)
         desc_label = ttk.Label(info_frame, text=desc_text, style="CardMuted.TLabel", font=("", 9))
         desc_label.pack(anchor="w", fill="x")
+        self._desc_labels.append(desc_label)
         # Dynamic wraplength based on available width
         def update_wrap(event, lbl=desc_label):
-            lbl.configure(wraplength=max(100, event.width - 10))
+            if not self._wrap_held:
+                lbl.configure(wraplength=max(100, event.width - 10))
         info_frame.bind("<Configure>", update_wrap)
 
         current_row += 1

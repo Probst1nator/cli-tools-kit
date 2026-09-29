@@ -7,6 +7,19 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Fixed
+- The window opened narrower than its footer: it was sized from the tool table
+  alone and capped at 800 px, so "Reinstall deps", "Refresh Status" and "Apply
+  Changes" were cut off. It now takes the width every row needs, within 90% of
+  the monitor, and cannot be dragged narrower than the footer. The height is
+  measured with the descriptions wrapped to that width instead of a guessed
+  230 px for the fixed rows.
+- The table's right-hand columns had fixed pixel widths, so "✗ Not installed"
+  was cut off at display scalings above 96 dpi. They now grow with the scaling
+  and fit their texts.
+- "Apply Changes" is packed first, so a window narrower than the footer loses
+  the left-hand controls before it.
+
 ## [1.0.0] - 2026-09-27
 
 The first stable release. From here the public surface in README § Stability
