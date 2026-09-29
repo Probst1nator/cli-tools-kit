@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.1.0] - 2026-09-29
+
 ### Added
 - Upgrades: when the window or the text screen opens, the installer checks in
   the background whether its own checkout or a tool repo it cloned is behind its
