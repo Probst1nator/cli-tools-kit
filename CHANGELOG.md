@@ -7,6 +7,13 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-29
+
+### Removed
+- The "Check on login" checkbox in the window's footer. The login check itself
+  stays: `--enable-autostart-check` and `--disable-autostart-check` switch it,
+  and an entry that is already on keeps running `--check` at login.
+
 ## [1.1.1] - 2026-09-29
 
 ### Fixed

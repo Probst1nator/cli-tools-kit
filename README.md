@@ -17,10 +17,10 @@ Provides:
 - **`gui_installer`** — a full, reusable tkinter GUI installer *engine*: it
   discovers every tool in a project tree that speaks `--advertise`, and offers
   batch install/remove, per-row skill toggles, themes, orphan cleanup, and an
-  opt-in login update-check. A thin wrapper points it at its own tree via
-  `gui_installer.run(root_dir=..., entry_script=...)`; everything else
-  (discovery layout, repo-cache bootstrap, login-check policy, window/desktop
-  identities) is configurable. See [§ GUI installer engine](#gui-installer-engine).
+  opt-in login update-check (`--enable-autostart-check`). A thin wrapper
+  points it at its own tree via `gui_installer.run(root_dir=...,
+  entry_script=...)`; everything else (discovery layout, repo-cache
+  bootstrap, login-check policy, window/desktop identities) is configurable. See [§ GUI installer engine](#gui-installer-engine).
 
 - **`sources`** — one installer offering tools from several repos. A TOML
   file lists them, the kit clones what is missing over HTTPS and hands the

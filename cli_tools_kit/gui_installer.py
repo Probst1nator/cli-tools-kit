@@ -1022,27 +1022,6 @@ class InstallerApp:
         # cleanup + .desktop/alias refresh, no pip).
         self._build_update_btn(footer)
 
-        # Login auto-check toggle: enable/disable the ~/.config/autostart entry that
-        # runs `installer.py --check` once per login — applies the same local-only
-        # reconciliations the badge does (no pip) and notifies for new tools. Same
-        # safety class as the badge, so it sits in the badge's group.
-        ttk.Separator(footer, orient="vertical").pack(side="left", fill="y", padx=15)
-        self._autostart_check_var = tk.BooleanVar(value=autostart.autostart_check_enabled())
-        self._autostart_check_cb = ttk.Checkbutton(
-            footer, text="Check on login", variable=self._autostart_check_var,
-            command=self._toggle_autostart_check)
-        self._autostart_check_cb.pack(side="left", padx=5)
-        self._attach_tooltip(
-            self._autostart_check_cb,
-            "Check for updates on login (local, no network)\n\n"
-            "Installs a startup entry that, once per login, applies "
-            "network-free reconciliations (drifted shortcuts, renamed aliases, and "
-            "stale installed skills — rewritten from the tool's source on disk, "
-            "never pip) and only notifies for updates that need the network (a new, "
-            "not-yet-installed tool).\n\n"
-            f"Entry: {state.AUTOSTART_CHECK_DESKTOP}\n"
-            f"Log: {state.CHECK_LOG}")
-
         # "Reinstall deps" is the deliberate, network-touching pip action — kept in
         # its own group (own separator) so it reads as distinct from the local badge.
         ttk.Separator(footer, orient="vertical").pack(side="left", fill="y", padx=15)
@@ -4063,16 +4042,6 @@ class InstallerApp:
         argv = upgrade.restart_argv()
         self.root.destroy()
         host.restart(argv)
-
-    def _toggle_autostart_check(self):
-        """Enable/disable the login update-check autostart entry."""
-        if self._autostart_check_var.get():
-            path = autostart.enable_autostart_check()
-            self._log(f"Login update check enabled → {path}", "success")
-            self._log("  On login: applies local reconciliations (no pip), notifies for new tools.", "info")
-        else:
-            autostart.disable_autostart_check()
-            self._log("Login update check disabled.", "info")
 
     def _reinstall_deps(self):
         """Full reinstall (pip dependencies + shortcuts) for every installed tool.
