@@ -7,7 +7,7 @@ call time as ``state.NAME``, so a change applies everywhere at once.
 from __future__ import annotations
 
 import os
-from typing import Callable, List, Optional
+from typing import Callable, List, Optional, Tuple
 
 from . import host
 from .identity import InstallerIdentity, LEGACY_IDENTITY
@@ -83,6 +83,14 @@ GROUP_BY: str = "capability"   # "capability" | "category"
 # login hook can never touch the network. REFRESH_REPOS is the bool handed to it.
 PRE_DISCOVERY: Optional[Callable] = None
 REFRESH_REPOS = False
+
+# UPGRADE_REPOS — (name, path) of the tool repos the installer cloned and may
+# pull, filled in by sources.run_installer. A checkout pinned by `path` is never
+# in it. upgrade.check() looks at these, at the installer's own checkout and at
+# cli-tools-kit. LAUNCH_ARGV is the command line the installer restarts with
+# after an upgrade; None means sys.argv.
+UPGRADE_REPOS: List[Tuple[str, str]] = []
+LAUNCH_ARGV: Optional[List[str]] = None
 
 # CHECK_RECONCILE_SHORTCUTS — login-check policy. When True (tools default) the
 # headless --check also network-free-reinstalls drifted shortcuts via the tool's

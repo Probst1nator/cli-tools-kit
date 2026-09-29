@@ -597,6 +597,18 @@ def _clone_reason(output: str) -> str:
     return _git_reason(output, "git clone failed")
 
 
+def _pullable(source: Source, root: Path) -> Optional[Path]:
+    """The clone of ``source`` that a refresh or an upgrade may pull, or None.
+
+    Only a checkout the installer cloned from ``url`` qualifies; one pinned by
+    ``path`` is someone's working tree and is never pulled.
+    """
+    if not source.url or (source.path and Path(source.path).is_dir()):
+        return None
+    target = root.joinpath(*source.name.split("/"))
+    return target if (target / ".git").is_dir() else None
+
+
 def _resolve_one(source: Source, root: Path, refresh: bool, log: Callable,
                  clone: bool) -> Optional[Path]:
     """Where one source sits on disk, cloning it if that is the only way."""
@@ -605,7 +617,7 @@ def _resolve_one(source: Source, root: Path, refresh: bool, log: Callable,
 
     target = root.joinpath(*source.name.split("/"))
     if target.is_dir():
-        if refresh and clone and (target / ".git").is_dir() and source.url:
+        if refresh and clone and _pullable(source, root):
             ok, out = _git("-C", str(target), "pull", "--ff-only")
             # A pull can fail for reasons the user cannot fix here: the remote
             # is gone, the network is down, the history diverged. One line, and
@@ -641,7 +653,8 @@ def _resolve_one(source: Source, root: Path, refresh: bool, log: Callable,
 
 def _resolve_level(sources: Sequence[Source], root: Path, refresh: bool, log: Callable,
                    clone: bool, config_name: str, depth: int,
-                   found: List[Path], seen: set) -> None:
+                   found: List[Path], seen: set,
+                   pullable: Optional[List[Tuple[str, str]]] = None) -> None:
     for source in sources:
         if not isinstance(source, Source):
             # An OrgSource nobody expanded. Ignored rather than fatal, so a
@@ -652,16 +665,19 @@ def _resolve_level(sources: Sequence[Source], root: Path, refresh: bool, log: Ca
             continue
         seen.add(path)
         found.append(path)
+        if pullable is not None and _pullable(source, root):
+            pullable.append((source.name, str(path)))
         if depth >= MAX_NESTING:
             continue
         nested = path / config_name
         if nested.is_file():
             _resolve_level(load_sources(nested, log=log), root, refresh, log, clone,
-                           config_name, depth + 1, found, seen)
+                           config_name, depth + 1, found, seen, pullable)
 
 
 def resolve_sources(sources: Sequence[Source], root, refresh: bool = False,
-                    log: Callable = print, clone: bool = True) -> List[Path]:
+                    log: Callable = print, clone: bool = True,
+                    pullable: Optional[List[Tuple[str, str]]] = None) -> List[Path]:
     """Put every source on disk and return one discovery root per repo.
 
     Clones the sources that are given by a URL and are not on disk yet. With
@@ -676,10 +692,14 @@ def resolve_sources(sources: Sequence[Source], root, refresh: bool = False,
 
     ``clone=False`` resolves from the filesystem alone and never reaches the
     network, which is what the login check needs.
+
+    A list passed as ``pullable`` receives ``(name, path)`` for every resolved
+    repo the installer cloned and may pull; a ``path`` checkout never is.
     """
     root = Path(os.path.expanduser(str(root))).absolute()
     found: List[Path] = []
-    _resolve_level(sources, root, refresh, log, clone, "installer.toml", 0, found, set())
+    _resolve_level(sources, root, refresh, log, clone, "installer.toml", 0, found, set(),
+                   pullable)
     return found
 
 
@@ -851,15 +871,18 @@ def run_installer(config_path, argv=None, default_root_name: str = "tools", **ru
     ``<cwd>/tools``.
 
     Every other keyword goes to :func:`cli_tools_kit.gui_installer.run`.
-    ``discovery_roots`` and ``pre_discovery`` are this function's to set.
+    ``discovery_roots``, ``pre_discovery`` and ``upgrade_repos`` are this function's to set.
     ``prune`` reaches the walker that way, so a wrapper can name directories
     its repos keep that hold no tools.
     """
-    for reserved in ("discovery_roots", "pre_discovery"):
+    for reserved in ("discovery_roots", "pre_discovery", "upgrade_repos"):
         if reserved in run_kwargs:
             raise TypeError(f"run_installer sets {reserved} itself")
 
     config_path = Path(config_path).absolute()
+    if argv is None:
+        from . import state  # noqa: PLC0415 — keeps the import graph flat
+        state.LAUNCH_ARGV = list(sys.argv)   # an upgrade restarts with --root intact
     argv = list(sys.argv[1:] if argv is None else argv)
     argv, root_arg = _take_root(argv)
     sys.argv = [sys.argv[0]] + argv
@@ -879,17 +902,21 @@ def run_installer(config_path, argv=None, default_root_name: str = "tools", **ru
     # disk already, for the --check path that never calls the hook — which is
     # why the expansion here is the network-free one.
     quiet = lambda *_: None  # noqa: E731
+    pullable: List[Tuple[str, str]] = []
     roots = [str(p) for p in resolve_sources(
         expand_org_sources(sources, cache_dir=cache_dir, root=root, clone=False,
                            log=quiet),
-        root, clone=False, log=quiet)]
+        root, clone=False, log=quiet, pullable=pullable)]
 
     def pre_discovery(refresh):
         expanded = expand_org_sources(sources, refresh=refresh, cache_dir=cache_dir,
                                       root=root)
-        roots[:] = [str(p) for p in resolve_sources(expanded, root, refresh=refresh)]
+        found: List[Tuple[str, str]] = []
+        roots[:] = [str(p) for p in resolve_sources(expanded, root, refresh=refresh,
+                                                    pullable=found)]
+        pullable[:] = found
 
     from . import gui_installer  # noqa: PLC0415 — imports tkinter, keep it lazy
     run_kwargs.setdefault("root_dir", root)
     return gui_installer.run(discovery_roots=roots, pre_discovery=pre_discovery,
-                             **run_kwargs)
+                             upgrade_repos=pullable, **run_kwargs)

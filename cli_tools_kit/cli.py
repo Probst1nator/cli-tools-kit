@@ -226,6 +226,22 @@ def cli_cleanup(dry_run: bool = False) -> int:
     return errors
 
 
+def cli_upgrade(tools: List[discovery.ToolEntry]) -> int:
+    """Check for newer versions now and upgrade what is behind. Returns 0 or 1."""
+    from . import upgrade  # noqa: PLC0415 — imports sources, only this path needs it
+    print("\nChecking for upgrades...")
+    items = upgrade.check(force=True)
+    if not items:
+        print("Everything is up to date.\n")
+        return 0
+    for item in items:
+        print(f"  {item.label()}")
+    print()
+    result = upgrade.upgrade(items, tools, lambda msg, tag="info": print(msg))
+    print(f"\nDone{', with errors' if result['errors'] else ''}.\n")
+    return 1 if result["errors"] else 0
+
+
 def cli_update_all(tools: List[discovery.ToolEntry]) -> int:
     """Sync: clean up orphans, then reinstall manager and all installed tool shortcuts.
 
@@ -439,6 +455,9 @@ def main():
                         help="Install the login update-check autostart entry")
     parser.add_argument("--disable-autostart-check", action="store_true",
                         help="Remove the login update-check autostart entry")
+    parser.add_argument("--upgrade", action="store_true",
+                        help="Check the installer's checkout, the tool repos it cloned and "
+                             "cli-tools-kit for newer versions, and upgrade them (network).")
     parser.add_argument("--refresh", action="store_true",
                         help="Before discovery, run the configured PRE_DISCOVERY hook in refresh "
                              "mode (e.g. ff-only pull every known repo checkout). No-op without a hook.")
@@ -493,6 +512,9 @@ def main():
 
     if args.update_all:
         sys.exit(1 if cli_update_all(tools) else 0)
+
+    if args.upgrade:
+        sys.exit(cli_upgrade(tools))
 
     if args.apply:
         from . import tui_installer
@@ -549,7 +571,8 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         self_desktop_file: Optional[str] = None, self_desktop_name: Optional[str] = None,
         self_desktop_icon: Optional[str] = None,
         wm_class: Optional[str] = None, notify_app: Optional[str] = None,
-        hooks: Optional[install.InstallHooks] = None) -> None:
+        hooks: Optional[install.InstallHooks] = None,
+        upgrade_repos: Optional[List] = None) -> None:
     """Configure the engine from a thin wrapper and dispatch the standard CLI/GUI.
 
     Every argument maps to a module-level config global; ``None`` leaves the
@@ -566,6 +589,9 @@ def run(*, identity: Optional[InstallerIdentity] = None,
 
     ``hooks`` replaces how one tool is installed, removed or given its skill,
     for a wrapper that builds a venv per tool itself. See :class:`InstallHooks`.
+
+    ``upgrade_repos`` lists ``(name, path)`` of the tool repos the upgrade may
+    pull; ``sources.run_installer`` fills it with the repos it cloned.
 
     ``prune`` adds directory names the default wider walk never enters, on top
     of ``DISCOVERY_PRUNE``. It does nothing when a wrapper passes its own
@@ -629,6 +655,8 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         state.NOTIFY_APP = notify_app
     if hooks is not None:
         install._apply_hooks(hooks)
+    if upgrade_repos is not None:
+        state.UPGRADE_REPOS = upgrade_repos
 
     state._load_env()                 # re-read ROOT_DIR/.env now that ROOT_DIR is final
     state._recompute_check_paths()    # re-derive login-check artifact paths from the names

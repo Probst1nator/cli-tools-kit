@@ -192,6 +192,20 @@ def test_a_checkout_given_by_path_is_never_pulled(tmp_path: Path, monkeypatch) -
     assert calls == []
 
 
+def test_only_clones_are_listed_for_the_upgrade(tmp_path: Path) -> None:
+    given = _repo(tmp_path / "given")
+    cloned = _repo(tmp_path / "root" / "cloned")
+    _repo(tmp_path / "root" / "no-url")
+    pullable: list = []
+    found = resolve_sources(
+        [Source(name="given", url="https://example.invalid/g.git", path=str(given)),
+         Source(name="cloned", url="https://example.invalid/c.git"),
+         Source(name="no-url")],
+        tmp_path / "root", clone=False, pullable=pullable)
+    assert len(found) == 3
+    assert pullable == [("cloned", str(cloned.resolve()))]
+
+
 def test_clone_false_never_reaches_git(tmp_path: Path, monkeypatch) -> None:
     (tmp_path / "root").mkdir()
     calls: list = []

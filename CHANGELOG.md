@@ -7,6 +7,17 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Added
+- Upgrades: when the window or the text screen opens, the installer checks in
+  the background whether its own checkout or a tool repo it cloned is behind its
+  upstream, and whether pip would install a newer cli-tools-kit within the
+  installer's pin. A strip above the table (the `u` key on the text screen)
+  pulls, upgrades the kit, reinstalls the tools of each pulled repo and starts
+  the installer again. `--upgrade` does the same headless. The network is used
+  at most once a day; `--check` still never touches it. New module `upgrade`,
+  new `run(upgrade_repos=...)`, filled by `sources.run_installer`, and a
+  `pullable` list argument on `sources.resolve_sources`.
+
 ### Fixed
 - The window opened narrower than its footer: it was sized from the tool table
   alone and capped at 800 px, so "Reinstall deps", "Refresh Status" and "Apply

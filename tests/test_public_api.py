@@ -57,7 +57,7 @@ def test_installer_side() -> None:
         "discoverer", "prune", "group_by", "pre_discovery", "check_reconcile_shortcuts",
         "skill_targets", "tui_preselect", "autostart_check_desktop_name",
         "check_log_name", "check_state_name", "self_desktop_file", "self_desktop_name",
-        "self_desktop_icon", "wm_class", "notify_app", "hooks",
+        "self_desktop_icon", "wm_class", "notify_app", "hooks", "upgrade_repos",
     }
     assert set(gui_installer.InstallHooks._fields) == {
         "install_tool", "remove_tool", "install_skill", "uninstall_skill"}
@@ -89,7 +89,7 @@ def test_grouping_side() -> None:
 
 
 @pytest.mark.parametrize("flag", [
-    "--list", "--apply", "--skill-target", "--refresh", "--update-all", "--install",
+    "--list", "--apply", "--skill-target", "--refresh", "--update-all", "--upgrade", "--install",
     "--uninstall", "--cleanup", "--check", "--tui", "--gui",
     "--enable-autostart-check", "--disable-autostart-check",
 ])

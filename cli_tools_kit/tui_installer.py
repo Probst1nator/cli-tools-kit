@@ -43,7 +43,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from . import gui_installer as gi
-from . import host
+from . import host, upgrade
 from .gui_installer import ToolEntry
 
 
@@ -289,6 +289,8 @@ class _State:
     busy: bool = False
     result: Optional[Dict[str, object]] = None
     events: "queue.Queue" = field(default_factory=queue.Queue)
+    upgrades: List["upgrade.Item"] = field(default_factory=list)
+    restart: bool = False   # an upgrade changed the installer; start it again on exit
 
     def refresh_status(self) -> None:
         for i, row in enumerate(self.rows):
@@ -305,6 +307,23 @@ def _worker(steps: List[Step], events: "queue.Queue") -> None:
         events.put(("log", f"  FAILED: {exc}"))
         result = {"errors": 1, "hint": None}
     events.put(("done", result))
+
+
+def _check_worker(events: "queue.Queue") -> None:
+    try:
+        items = upgrade.check()
+    except Exception:  # an upgrade check must never take the screen down
+        items = []
+    events.put(("upgrades", items))
+
+
+def _upgrade_worker(items, tools: List[ToolEntry], events: "queue.Queue") -> None:
+    try:
+        result = upgrade.upgrade(items, tools, lambda msg, tag="info": events.put(("log", msg)))
+    except Exception as exc:
+        events.put(("log", f"  FAILED: {exc}"))
+        result = {"changed": False, "errors": 1}
+    events.put(("upgraded", result))
 
 
 def _fit(text: str, width: int) -> str:
@@ -331,7 +350,8 @@ def _draw(scr, st: _State) -> None:
     height, width = scr.getmaxyx()
     _put(scr, 0, 1, st.title, curses.A_BOLD)
     _put(scr, 1, 1, "Space install   s skill   1-9 skill target   a all   n none   "
-                    "Enter apply   q quit", curses.A_DIM)
+                    "Enter apply   " + ("u upgrade   " if st.upgrades else "") + "q quit",
+         curses.A_DIM)
     tline = "Skills go to:"
     for i, target in enumerate(st.targets, start=1):
         tick = "x" if target.key in st.active else " "
@@ -384,6 +404,19 @@ def _drain(st: _State) -> None:
             st.refresh_status()
             hint = payload.get("hint")
             st.log.append(f"Done: {summary(payload)}" + (f" — run: {hint}" if hint else ""))
+        elif kind == "upgrades":
+            st.upgrades = list(payload)
+            if st.upgrades:
+                st.log.append("Upgrade available: "
+                              + " · ".join(item.label() for item in st.upgrades)
+                              + " — press u")
+        elif kind == "upgraded":
+            st.busy = False
+            if payload["changed"] and not payload["errors"]:
+                st.restart = True
+            else:
+                st.log.append("Upgrade finished with errors; see above." if payload["errors"]
+                              else "Nothing was upgraded.")
 
 
 def _loop(scr, st: _State) -> None:
@@ -397,6 +430,8 @@ def _loop(scr, st: _State) -> None:
     scr.timeout(100)
     while True:
         _drain(st)
+        if st.restart:
+            return
         _draw(scr, st)
         ch = scr.getch()
         if ch == -1 or st.busy:
@@ -426,6 +461,13 @@ def _loop(scr, st: _State) -> None:
         elif ch == ord("n"):
             for row in st.rows:
                 row.install = row.skill = False
+        elif ch == ord("u") and st.upgrades:
+            items, st.upgrades = st.upgrades, []
+            st.result = None
+            st.busy = True
+            threading.Thread(target=_upgrade_worker,
+                             args=(items, [row.tool for row in st.rows], st.events),
+                             daemon=True).start()
         elif ch in (curses.KEY_ENTER, 10, 13, ord("i")):
             steps = plan(st.rows, st.targets, st.active)
             if not steps:
@@ -457,7 +499,11 @@ def run_tui(tools: List[ToolEntry], *, targets: Optional[List[SkillTarget]] = No
     rows = default_rows(tools, preselect, skill_installed=targets[0].installed)
     st = _State(rows=rows, targets=targets, active={targets[0].key}, title=title)
     st.refresh_status()
+    threading.Thread(target=_check_worker, args=(st.events,), daemon=True).start()
     curses.wrapper(lambda scr: _loop(scr, st))
+    if st.restart:
+        print("Upgraded. Starting the installer again...")
+        host.restart(upgrade.restart_argv())
     if st.result is not None:
         print(f"Done: {summary(st.result)}.")
         hint = st.result.get("hint")

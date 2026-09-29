@@ -68,6 +68,22 @@ def child_env(env: Optional[dict] = None) -> dict:
     return env
 
 
+# --- restarting -------------------------------------------------------------------
+
+def restart(argv: Iterable[str]) -> None:
+    """Replace this process with a new one running ``argv``; does not return.
+
+    After an upgrade the old code is still loaded, so the installer starts
+    again. Windows has no real exec (``os.execv`` there spawns a child and
+    leaves the console behind), so it starts the new process and exits.
+    """
+    argv = list(argv)
+    if IS_WINDOWS:
+        subprocess.Popen(argv)
+        os._exit(0)
+    os.execv(argv[0], argv)
+
+
 # --- where the shims live -----------------------------------------------------
 
 def shim_dir(identity) -> str:

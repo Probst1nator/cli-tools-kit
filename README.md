@@ -245,23 +245,52 @@ Keyword-only; every argument defaults to `None`, meaning "leave the default".
 | `notify_app` | identity's | `notify-send` application label on the `--check` path. |
 | `autostart_check_desktop_name`, `check_log_name`, `check_state_name` | identity's | Login-check artifact filenames. |
 | `hooks` | `None` | `InstallHooks(install_tool=…, remove_tool=…, install_skill=…, uninstall_skill=…)`: replace how one tool is installed, for a wrapper that builds a venv per tool. A field left `None` keeps the kit's own. |
+| `upgrade_repos` | `[]` | `(name, path)` of the tool repos an upgrade may pull. `sources.run_installer` fills it with the repos it cloned. See "Upgrades" below. |
 
 The identity is applied first and these individual names override it, so you can
 take the whole namespace from a slug and still change one thing.
 
 `run()` owns its own `argparse` and consumes `sys.argv`: `--list`, `--check`,
-`--enable-autostart-check`, `--install`, `--update-all`, `--cleanup`, `--tui`,
-`--gui`, and a screen when given none of them. A wrapper that needs its own
+`--enable-autostart-check`, `--install`, `--update-all`, `--upgrade`, `--cleanup`,
+`--tui`, `--gui`, and a screen when given none of them. A wrapper that needs its own
 subcommands should skip `run()` and call the primitives (`discover_tools`,
 `install_tool`, `remove_tool`, `cli_check`) after applying an identity with
 `_apply_identity`.
+
+### Upgrades
+
+When the window or the text screen opens, the installer checks in the
+background whether anything it runs is out of date:
+
+- the installer's own checkout (the git repo `entry_script` is in) is behind
+  its upstream;
+- a tool repo in `upgrade_repos` is behind its upstream;
+- pip would install a newer cli-tools-kit within the installer's pin. The pin is
+  the `requirements.txt` next to `entry_script` when it names the kit, else
+  anything below the next major version.
+
+If something is, a strip above the table lists it with an Upgrade button (on
+the text screen, a log line and the `u` key). Upgrade pulls the repos with `git
+pull --ff-only`, runs `pip install --upgrade` for the kit, reinstalls the
+installed tools of each pulled repo, and starts the installer again with its
+original command line so the new code is loaded. `--upgrade` does the same
+from a script, checking at once and without the restart.
+
+The network is used at most once a day: one `git fetch` per repo and one `pip
+install --dry-run`, cached under the identity's cache directory. The
+comparison with what is on disk runs on every start, so a repo pulled by hand
+stops showing at once. Git never asks for a password here; a private repo
+without stored credentials is skipped. The kit is left alone when it runs from
+a development checkout or outside a virtual environment. `--check` never runs
+any of this, so the login check stays network-free.
 
 ### The text screen
 
 Without a display (`DISPLAY`/`WAYLAND_DISPLAY` unset: SSH, WSL, a server) or
 without `python3-tk`, `run()` opens a curses screen instead of the tkinter
 window; `--tui` and `--gui` force either. Same rows, same Apply: `Space` ticks
-Install, `s` ticks Skill, `a`/`n` tick all or none, `Enter` applies, `q` quits.
+Install, `s` ticks Skill, `a`/`n` tick all or none, `Enter` applies, `u`
+upgrades when an upgrade is offered, `q` quits.
 On a host where none of the tools is installed yet every row starts ticked.
 
 A skill can go to more than one place. The default target writes
@@ -442,8 +471,8 @@ full rather than shallow (a tool that stamps its output with its commit needs th
 history), and nothing is cloned into a root that does not exist or cannot be
 written to. A clone that fails prints one line and that source is dropped, so a
 colleague without access to a private repo still gets everybody else's tools.
-`--refresh` brings the clones up to date with `git pull --ff-only`; a checkout
-given by `path` is never pulled. Cloning happens in the engine's `pre_discovery`
+`--refresh` and the upgrade (see "Upgrades") bring the clones up to date with
+`git pull --ff-only`; a checkout given by `path` is never pulled. Cloning happens in the engine's `pre_discovery`
 hook, which `--check` skips, so the login check stays network-free.
 
 An `org` entry is the only thing in this module that reaches anything but git,

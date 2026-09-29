@@ -62,6 +62,7 @@ except ImportError:  # pragma: no cover - exercised only where python3-tk is mis
 from typing import Dict, List, Optional
 
 from . import host, state, settings, discovery, install, sweep, autostart, icons, cli
+from . import upgrade
 from .autostart_gate import (
     _parse_hhmm,
     current_ssids,
@@ -270,6 +271,10 @@ class InstallerApp:
         self.tk_widgets: List[tk.Widget] = []  # Other tk widgets that need bg updates
         self.usage_counts: Dict[str, int] = get_all_usage_counts()  # Tool usage statistics
 
+        # What upgrade.check() found; the strip above the table shows it and
+        # survives a theme rebuild.
+        self._upgrade_items: List[upgrade.Item] = []
+
         # Search/filter tracking
         self.search_var = tk.StringVar()
         self.category_widgets: Dict[str, tk.Widget] = {}  # category_name -> frame
@@ -298,6 +303,10 @@ class InstallerApp:
         # logged (see _maybe_auto_update_on_startup). Runs after the orphan
         # warning so the two don't fight over the log/dialog at the same tick.
         self.root.after(200, self._maybe_auto_update_on_startup)
+
+        # Newer installer, tool repos or kit: asks git and pip off the main
+        # thread, over the network at most once a day (see upgrade.check).
+        self.root.after(300, self._start_upgrade_check)
 
     # Standard freedesktop icon sizes. wm iconphoto silently fails to set
     # _NET_WM_ICON at all when handed only a source-resolution (e.g. 512x512)
@@ -763,7 +772,7 @@ class InstallerApp:
         main_container = ttk.Frame(self.root, padding="20")
         main_container.grid(row=0, column=0, sticky="nsew")
         main_container.columnconfigure(0, weight=1)
-        main_container.rowconfigure(2, weight=1)
+        main_container.rowconfigure(3, weight=1)
 
         # Title
         title_frame = ttk.Frame(main_container)
@@ -814,9 +823,14 @@ class InstallerApp:
                              "Re-tint this theme from a base color "
                              "(re-click the theme emoji to reset)")
 
+        # Upgrade strip — only gridded while upgrade.check() has found something.
+        self.upgrade_bar = tk.Frame(main_container, bg=t["panel"], highlightthickness=1,
+                                    highlightbackground=t["accent"])
+        self._render_upgrade_bar()
+
         # Search bar
         search_frame = ttk.Frame(main_container)
-        search_frame.grid(row=1, column=0, pady=(0, 10), sticky="ew")
+        search_frame.grid(row=2, column=0, pady=(0, 10), sticky="ew")
 
         self.search_entry = tk.Entry(
             search_frame, textvariable=self.search_var,
@@ -875,7 +889,7 @@ class InstallerApp:
 
         # Scrollable Area
         self.outer_frame = ttk.Frame(main_container, relief="flat")
-        self.outer_frame.grid(row=2, column=0, sticky="nsew")
+        self.outer_frame.grid(row=3, column=0, sticky="nsew")
         self.outer_frame.columnconfigure(0, weight=1)
         self.outer_frame.rowconfigure(0, weight=1)
 
@@ -969,7 +983,7 @@ class InstallerApp:
 
         # Footer / Buttons
         footer = ttk.Frame(main_container, padding=(0, 20, 0, 0))
-        footer.grid(row=3, column=0, sticky="ew")
+        footer.grid(row=4, column=0, sticky="ew")
 
         # Packed first: when the window is narrower than the footer, pack takes
         # the space from the widgets packed last, so Apply stays visible.
@@ -1049,7 +1063,7 @@ class InstallerApp:
         self.log_expanded = tk.BooleanVar(value=False)
 
         log_container = ttk.Frame(main_container)
-        log_container.grid(row=4, column=0, sticky="nsew", pady=(15, 0))
+        log_container.grid(row=5, column=0, sticky="nsew", pady=(15, 0))
         log_container.columnconfigure(0, weight=1)
 
         # Header row (clickable to expand/collapse)
@@ -1106,7 +1120,7 @@ class InstallerApp:
         self.log_text.see("end")
 
         indicator_frame = ttk.Frame(main_container)
-        indicator_frame.grid(row=5, column=0, sticky="ew", pady=(10, 0))
+        indicator_frame.grid(row=6, column=0, sticky="ew", pady=(10, 0))
 
         self.status_bar = ttk.Label(indicator_frame, text="Ready", foreground=t["muted"], font=("", 9, "italic"))
         self.status_bar.pack(side="left")
@@ -3939,6 +3953,117 @@ class InstallerApp:
         else:
             self._log("Already up to date — nothing to do.", "success")
 
+    # --- upgrades -----------------------------------------------------------------
+
+    def _start_upgrade_check(self):
+        """Run upgrade.check() on a thread and show what it finds in the strip."""
+        results: queue.Queue = queue.Queue()
+
+        def work():
+            try:
+                results.put(upgrade.check())
+            except Exception as exc:  # a failed check must not take the window down
+                results.put(exc)
+
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(200, lambda: self._poll_upgrade_check(results))
+
+    def _poll_upgrade_check(self, results):
+        try:
+            found = results.get_nowait()
+        except queue.Empty:
+            self.root.after(200, lambda: self._poll_upgrade_check(results))
+            return
+        if isinstance(found, Exception):
+            self._log(f"Upgrade check failed: {found}", "error")
+            return
+        was_shown = bool(self._upgrade_items)
+        self._upgrade_items = list(found)
+        self._render_upgrade_bar()
+        if self._upgrade_items and not was_shown:
+            # The window was sized without the strip; make room for it rather
+            # than take its height from the table.
+            self.root.update_idletasks()
+            _, _, _, mon_height = self._get_primary_monitor_geometry()
+            height = min(self.root.winfo_height() + self.upgrade_bar.winfo_reqheight() + 10,
+                         int(mon_height * 0.9))
+            self.root.geometry(f"{self.root.winfo_width()}x{height}")
+
+    def _render_upgrade_bar(self):
+        """Show the upgrade strip for what the last check found, or hide it."""
+        bar = self.upgrade_bar
+        for child in bar.winfo_children():
+            child.destroy()
+        self._upgrade_btn = None
+        if not self._upgrade_items:
+            bar.grid_remove()
+            return
+        t = self.theme
+        # The button is packed first so a narrow window squeezes the text, not it.
+        self._upgrade_btn = ttk.Button(bar, text="Upgrade", style="Accent.TButton",
+                                       command=self._upgrade_clicked)
+        self._upgrade_btn.pack(side="right", padx=8, pady=6)
+        if getattr(self, "_op_in_progress", False):
+            self._upgrade_btn.configure(state="disabled")
+        tk.Label(bar, text="Upgrade available:", bg=t["panel"], fg=t["accent"],
+                 font=("", 10, "bold")).pack(side="left", padx=(10, 6), pady=6)
+        detail = tk.Label(bar, text=" · ".join(item.label() for item in self._upgrade_items),
+                          bg=t["panel"], fg=t["fg"], font=("", 10), anchor="w",
+                          justify="left", wraplength=400)
+        detail.pack(side="left", fill="x", expand=True, pady=6)
+        detail.bind("<Configure>",
+                    lambda e: detail.configure(wraplength=max(150, e.width - 10)))
+        bar.grid(row=1, column=0, pady=(0, 10), sticky="ew")
+
+    def _upgrade_clicked(self):
+        if self._op_in_progress or not self._upgrade_items:
+            return
+        items = list(self._upgrade_items)
+        lines = "\n".join(f"  • {item.label()}" for item in items)
+        if not messagebox.askyesno(
+            "Upgrade?",
+            f"This brings these up to date:\n\n{lines}\n\n"
+            "Repos are pulled, cli-tools-kit is upgraded with pip, the installed "
+            "tools of a pulled repo are reinstalled, and the installer restarts.\n\n"
+            "This uses the network. Continue?",
+        ):
+            return
+        self._op_in_progress = True
+        self._set_action_buttons_state("disabled")
+        self._clear_hint()
+        self._toggle_log(force_expand=True)
+        events: queue.Queue = queue.Queue()
+
+        def work():
+            def log(msg, tag="info"):
+                events.put(("log", msg, tag))
+            try:
+                result = upgrade.upgrade(items, self.tools, log)
+            except Exception as exc:  # the UI must come back whatever went wrong
+                log(f"Upgrade failed: {exc}", "error")
+                result = {"changed": False, "errors": 1}
+            events.put(("done", result))
+
+        threading.Thread(target=work, daemon=True).start()
+        self.root.after(50, lambda: self._drain_op_events(events, self._finish_upgrade))
+
+    def _finish_upgrade(self, result):
+        self._op_in_progress = False
+        self._set_action_buttons_state("normal")
+        if result["changed"] and not result["errors"]:
+            self._log("Restarting the installer to load the new version...", "header")
+            self.root.after(1500, self._restart_installer)
+            return
+        if result["changed"]:
+            self._log("Some steps failed (see above). Close and reopen the installer "
+                      "to load what was upgraded.", "error")
+        self._start_upgrade_check()   # the strip then shows only what is still behind
+
+    def _restart_installer(self):
+        argv = upgrade.restart_argv()
+        self.root.destroy()
+        host.restart(argv)
+
     def _toggle_autostart_check(self):
         """Enable/disable the login update-check autostart entry."""
         if self._autostart_check_var.get():
@@ -4138,7 +4263,7 @@ class InstallerApp:
 
         Greys the ttk action buttons and the custom update badge together; the badge
         also ignores clicks while disabled (see _set_update_enabled)."""
-        for attr in ("_reinstall_btn", "_apply_btn"):
+        for attr in ("_reinstall_btn", "_apply_btn", "_upgrade_btn"):
             btn = getattr(self, attr, None)
             if btn is not None:
                 btn.configure(state=state)
@@ -4149,7 +4274,8 @@ class InstallerApp:
 # globals (gi.IDENTITY, gi.install_tool = ...). Those names now live in the
 # modules below. Reading, assigning or deleting one through gui_installer goes
 # to the module that holds it, where every screen looks it up at call time.
-_ENGINE_MODULES = (state, settings, discovery, install, sweep, autostart, icons, cli)
+_ENGINE_MODULES = (state, settings, discovery, install, sweep, autostart, icons, cli,
+                   upgrade)
 
 
 def _home_of(name: str):
