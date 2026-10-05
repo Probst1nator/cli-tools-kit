@@ -7,6 +7,14 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Fixed
+- Text screen and `--apply`: a skill landed in `~/.claude/skills` even when the
+  claude skill target was not chosen (only a wrapper's own target, or `none`).
+  PROTOCOL.md lets a tool's `--install` write its skill there by itself, and
+  the Apply step did not undo that. It now runs the tool's `--uninstall-skill`
+  after the install when the skill directory did not exist before and no step
+  writes the claude target for that tool.
+
 ## [1.3.0] - 2026-09-29
 
 ### Changed

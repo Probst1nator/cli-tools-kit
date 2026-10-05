@@ -5,6 +5,7 @@ The curses drawing itself is not tested; everything below it is plain data.
 
 from __future__ import annotations
 
+import shutil
 from typing import List, Optional
 
 import pytest
@@ -148,6 +149,29 @@ def test_execute_writes_no_skill_for_a_tool_that_failed(monkeypatch: pytest.Monk
     assert written == ["good"]
     assert result["errors"] == 1 and result["skill_install"] == 1
     assert "Skill bad skipped: bad did not install" in log
+
+
+def test_execute_removes_claude_skill_that_install_wrote_unasked(
+        monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+    # PROTOCOL.md lets --install write ~/.claude/skills/<name> itself.
+    monkeypatch.setattr(gi, "CLAUDE_SKILLS_DIR", str(tmp_path))
+
+    def install(t, skip_deps=False):
+        (tmp_path / t.skill_name).mkdir(exist_ok=True)
+        (tmp_path / t.skill_name / "SKILL.md").write_text("x")
+        return True, ""
+    monkeypatch.setattr(gi, "install_tool", install)
+    monkeypatch.setattr(gi, "uninstall_skill_for_tool",
+                        lambda t: (shutil.rmtree(tmp_path / t.skill_name), (True, ""))[1])
+    monkeypatch.setattr(gi, "refresh_desktop_database", lambda: None)
+    (tmp_path / "old").mkdir()   # there before the install: left alone
+    a, old, c = _tool("a", skill="a"), _tool("old", skill="old"), _tool("c", skill="c")
+    steps = [tui.Step("install", a), tui.Step("install", old), tui.Step("install", c),
+             tui.Step("skill_install", a, _target("fauclaude", have=[])),
+             tui.Step("skill_install", c, _target("claude", have=[]))]
+    result = tui.execute(steps, lambda msg: None)
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["c", "old"]
+    assert not result.get("errors")
 
 
 # --- apply_headless ---------------------------------------------------------

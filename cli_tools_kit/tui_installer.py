@@ -23,6 +23,9 @@ more than one place. The default target, :func:`claude_target`, writes
 wrapper passes further :class:`SkillTarget` values via
 ``run(skill_targets=[...])``; the screen lists them and the user picks which
 ones the Apply step writes to. Targets the user left unticked are not touched.
+A skill directory that a tool's own ``--install`` creates in
+``~/.claude/skills`` is removed again when the claude target is not chosen for
+that tool.
 
 Keys
 ----
@@ -171,12 +174,21 @@ def execute(steps: List[Step], log: Callable[[str], None]) -> Dict[str, object]:
     counts: Counter = Counter()
     hint = None
     failed: Set[str] = set()   # script paths whose install or update failed
+    # Script paths whose skill this Apply writes to ~/.claude/skills.
+    claude_skill = {s.tool.script_path for s in steps if s.kind == "skill_install"
+                    and s.target is not None and s.target.key == "claude"}
     for step in steps:
         tool, target = step.tool, step.target
         if step.kind == "skill_install" and tool.script_path in failed:
             # A skill tells the agent to run the tool; without the tool it misleads.
             log(f"Skill {tool.skill_name} skipped: {tool.name} did not install")
             continue
+        # PROTOCOL.md lets a tool's --install write ~/.claude/skills/<name> by
+        # itself. When that directory did not exist before and no step asks for
+        # the claude target, the copy is removed after the install.
+        stray = (step.kind in ("install", "update") and bool(tool.skill_name)
+                 and tool.script_path not in claude_skill
+                 and not os.path.lexists(os.path.join(gi.CLAUDE_SKILLS_DIR, tool.skill_name)))
         if step.kind == "install":
             log(f"Installing {tool.name}")
             ok, out = gi.install_tool(tool)
@@ -211,6 +223,15 @@ def execute(steps: List[Step], log: Callable[[str], None]) -> Dict[str, object]:
             log(f"    {line}")
         if ok and out:
             hint = _hint(out) or hint
+        if stray and gi._skill_installed(tool.skill_name):
+            gone, gone_out = gi.uninstall_skill_for_tool(tool)
+            if gone:
+                log(f"  removed ~/.claude/skills/{tool.skill_name}: --install wrote it, "
+                    "but the claude skill target is not chosen")
+            else:
+                counts["errors"] += 1
+                log(f"  FAILED to remove ~/.claude/skills/{tool.skill_name}, which "
+                    f"--install wrote: {gone_out}")
     gi.refresh_desktop_database()
     result: Dict[str, object] = dict(counts)
     result["hint"] = hint
