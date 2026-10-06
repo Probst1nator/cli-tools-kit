@@ -21,6 +21,12 @@ Stability for what counts as the public surface.
 - `ToolInstaller.install_dependencies` ran `pip install -r` on a
   `requirements.txt` that held only comments and blank lines, and pip warned
   about an empty file in the install log. It now skips pip for such a file.
+- A tool installed by an installer with `LEGACY_IDENTITY` wrote its alias to
+  `~/.probable_work_aliases` instead of `~/.tools_aliases`, so the installer
+  listed it as not installed. `InstallerIdentity.from_env()` rebuilt the
+  identity from the slug `probable.work` alone, which loses every name the
+  legacy identity overrides (alias file, config and cache dir, the `~/.bashrc`
+  comment label). It now returns `LEGACY_IDENTITY` for that slug.
 
 ## [1.3.0] - 2026-09-29
 

@@ -159,6 +159,27 @@ def test_tool_takes_the_identity_of_the_installer_that_spawned_it(
     assert not (sandbox_home / ".tools_aliases").exists()
 
 
+def test_tool_spawned_by_the_legacy_installer_keeps_the_legacy_names(
+    sandbox_home: Path, tmp_path: Path, monkeypatch, linux_host
+):
+    # A slug alone rebuilt InstallerIdentity(slug="probable.work"), whose
+    # aliases file is ~/.probable_work_aliases, not the legacy ~/.tools_aliases.
+    for key, value in LEGACY_IDENTITY.env().items():
+        monkeypatch.setenv(key, value)
+    monkeypatch.setenv("TOOLS_INSTALLER_SKIP_DEPS", "1")
+    assert InstallerIdentity.from_env(InstallerIdentity(slug="acme-tools")) is LEGACY_IDENTITY
+    inst = ToolInstaller(
+        script_path=str(_tool(tmp_path)),
+        metadata=ToolMetadata(name="Greeter", desktop_file="greeter.desktop",
+                              icon="dialog-information", desc="Say hello",
+                              tags=["CLI"], alias="greeter"),
+    )
+    assert inst.identity is LEGACY_IDENTITY
+    inst.install()
+    assert "alias greeter=" in (sandbox_home / ".tools_aliases").read_text()
+    assert not (sandbox_home / ".probable_work_aliases").exists()
+
+
 def test_tool_run_by_hand_keeps_the_legacy_names(sandbox_home: Path, tmp_path: Path,
                                                  monkeypatch, linux_host):
     monkeypatch.delenv(InstallerIdentity.ENV_VAR, raising=False)

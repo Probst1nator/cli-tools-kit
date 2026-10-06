@@ -199,11 +199,18 @@ class InstallerIdentity:
 
         Returns ``default`` (or :data:`LEGACY_IDENTITY`) when the variable is
         unset or malformed, so a tool run by hand still installs normally.
+
+        The legacy slug returns :data:`LEGACY_IDENTITY` itself. A slug alone
+        cannot rebuild an identity that overrides its names, and
+        ``InstallerIdentity(slug="probable.work")`` would write the aliases to
+        ``~/.probable_work_aliases`` instead of ``~/.tools_aliases``.
         """
         slug = os.environ.get(cls.ENV_VAR, "").strip()
         fallback = default if default is not None else LEGACY_IDENTITY
         if not slug:
             return fallback
+        if slug == LEGACY_IDENTITY.slug:
+            return LEGACY_IDENTITY
         try:
             return cls(slug=slug)
         except ValueError:
