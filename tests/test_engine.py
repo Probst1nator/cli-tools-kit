@@ -99,6 +99,33 @@ def test_cron_autostart_on_and_off(engine, fake_crontab: Path, monkeypatch) -> N
 
 
 @POSIX_ONLY
+def test_a_cron_line_quotes_paths_with_spaces(engine, fake_crontab: Path, monkeypatch) -> None:
+    """cron runs the line through /bin/sh, so a space must not split a path.
+    A plain path stays unquoted, so lines already in a crontab still match."""
+    import shlex
+    import sys
+
+    from cli_tools_kit import autostart
+
+    monkeypatch.setenv("PATH", str(fake_crontab.parent) + os.pathsep + os.environ["PATH"])
+    tool = _tools(engine)["crontool"]
+    monkeypatch.setattr(sys, "executable", "/usr/bin/python3")
+    plain = tool._replace(script_path="/opt/tools/crontool/main.py")
+    assert autostart._cron_line_for_tool(plain) == "@reboot /usr/bin/python3 /opt/tools/crontool/main.py"
+
+    monkeypatch.setattr(sys, "executable", "/opt/my env/bin/python3")
+    spaced = tool._replace(script_path="/home/u/My Tools/crontool/main.py")
+    ok, msg = engine.enable_autostart(spaced)
+    assert ok, msg
+    assert shlex.split(fake_crontab.read_text()) == [
+        "@reboot", "/opt/my env/bin/python3", "/home/u/My Tools/crontool/main.py"]
+    assert engine.is_autostart_enabled(spaced)
+    ok, msg = engine.disable_autostart(spaced)
+    assert ok, msg
+    assert fake_crontab.read_text().strip() == ""
+
+
+@POSIX_ONLY
 def test_conditions_turn_the_autostart_entry_into_a_gated_copy(engine) -> None:
     tool = _tools(engine)["guitool"]._replace(autostart_conditions=["time_window"])
     assert engine.install_tool(tool, skip_deps=True)[0]

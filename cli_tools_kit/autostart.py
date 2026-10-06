@@ -83,8 +83,14 @@ def get_autostart_path(tool: discovery.ToolEntry) -> str:
 
 
 def _cron_line_for_tool(tool: discovery.ToolEntry) -> str:
-    """Build the crontab line for a cron-based tool."""
-    parts = [tool.cron_schedule, sys.executable, tool.script_path] + list(tool.cron_args)
+    """Build the crontab line for a cron-based tool.
+
+    cron hands the command to /bin/sh, so a space in the interpreter or script
+    path would split it. shlex.quote leaves a plain path unchanged, so lines
+    already in a crontab still match.
+    """
+    parts = [tool.cron_schedule, shlex.quote(sys.executable),
+             shlex.quote(tool.script_path)] + list(tool.cron_args)
     return " ".join(parts)
 
 

@@ -14,6 +14,10 @@ Stability for what counts as the public surface.
   the Apply step did not undo that. It now runs the tool's `--uninstall-skill`
   after the install when the skill directory did not exist before and no step
   writes the claude target for that tool.
+- A cron autostart line broke when the interpreter or the tool's script path
+  contained a space: cron hands the line to `/bin/sh`, which split the path.
+  Both are now quoted with `shlex.quote`. A plain path stays unquoted, so lines
+  already in a crontab still match.
 
 ## [1.3.0] - 2026-09-29
 
