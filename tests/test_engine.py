@@ -162,10 +162,10 @@ def test_update_all_reinstalls_what_is_installed(engine, monkeypatch) -> None:
     calls = []
     real = engine.install_tool
     monkeypatch.setattr(engine, "install_tool",
-                        lambda t, skip_deps=False: calls.append(t.alias) or real(t, True))
+                        lambda t, skip_deps=False: calls.append((t.alias, skip_deps)) or real(t, True))
     monkeypatch.setattr(engine, "cli_install_self", lambda quiet=False: (True, ""))
     engine.cli_update_all(list(tools.values()))
-    assert calls == ["clitool"]
+    assert calls == [("clitool", True)]   # a shortcut refresh, never pip
     assert engine.is_installed(tools["clitool"])
 
 

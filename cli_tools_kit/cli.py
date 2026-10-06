@@ -245,6 +245,7 @@ def cli_upgrade(tools: List[discovery.ToolEntry]) -> int:
 def cli_update_all(tools: List[discovery.ToolEntry]) -> int:
     """Sync: clean up orphans, then reinstall manager and all installed tool shortcuts.
 
+    Runs no pip: tools are reinstalled with skip_deps=True, like the --check reconcile.
     Returns the number of steps that failed.
     """
     removed = 0
@@ -298,7 +299,7 @@ def cli_update_all(tools: List[discovery.ToolEntry]) -> int:
     for tool in installed_tools:
         label = f"  Updating {tool.name}..."
         print(f"{label:<{max_name_len + 15}}", end=" ", flush=True)
-        success, output = install.install_tool(tool)
+        success, output = install.install_tool(tool, skip_deps=True)
         if success:
             print("[OK]")
             updated += 1

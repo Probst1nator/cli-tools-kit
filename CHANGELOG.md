@@ -7,6 +7,13 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Changed
+- `--update-all` no longer runs pip. It reinstalls every installed tool with
+  `skip_deps=True`, as the `--check` reconcile already did, so it only refreshes
+  shortcuts. Dependencies are installed by `--install`, `--upgrade` and the
+  GUI's "Reinstall deps". A wrapper whose install hook builds missing tool venvs
+  (WW3) no longer does that on `--update-all`.
+
 ### Fixed
 - Text screen and `--apply`: a skill landed in `~/.claude/skills` even when the
   claude skill target was not chosen (only a wrapper's own target, or `none`).
