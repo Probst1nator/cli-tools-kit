@@ -33,6 +33,18 @@ def _check_desktop_field(value: str, field: str) -> None:
             f"ToolMetadata.{field} must not contain newline or NUL characters"
         )
 
+
+def _lists_requirements(req_file: str) -> bool:
+    """True when *req_file* has a line left after stripping comments and blanks.
+
+    An unreadable file counts as listing something, so pip reports the problem.
+    """
+    try:
+        with open(req_file, encoding="utf-8", errors="replace") as fh:
+            return any(line.split("#", 1)[0].strip() for line in fh)
+    except OSError:
+        return True
+
 try:
     from termcolor import colored
 except ImportError:
@@ -180,6 +192,10 @@ class ToolInstaller:
 
         req_file = self._get_requirements_path()
         if not os.path.exists(req_file):
+            return True
+        if not _lists_requirements(req_file):
+            # Some tools carry a comment-only file so the installer's walker
+            # lists them. pip would only warn that it is empty.
             return True
 
         print(colored("Installing dependencies...", "cyan"))

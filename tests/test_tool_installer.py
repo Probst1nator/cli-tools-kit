@@ -298,3 +298,24 @@ def test_variants_selects_by_desktop_file(sandbox_home: Path) -> None:
     assert installer.variants("voice-private.desktop") == [private]
     with pytest.raises(ValueError):
         installer.variants("missing.desktop")
+
+
+@pytest.mark.parametrize("text, runs_pip", [
+    ("# listed so the installer's walker finds the tool\n\n   # indented\n", False),
+    ("", False),
+    ("# deps\nrequests>=2  # http\n", True),
+])
+def test_install_dependencies_skips_pip_without_a_requirement(
+        sandbox_home: Path, monkeypatch, text: str, runs_pip: bool) -> None:
+    """A comment-only requirements.txt made pip warn about an empty file."""
+    from cli_tools_kit import tool_installer
+
+    script = _make_script(sandbox_home)
+    (Path(script).parent / "requirements.txt").write_text(text)
+    calls: list = []
+    monkeypatch.setattr(tool_installer.subprocess, "run", lambda cmd, **kw: calls.append(cmd))
+    monkeypatch.delenv("TOOLS_INSTALLER_SKIP_DEPS", raising=False)
+    installer = ToolInstaller(script_path=script, metadata=ToolMetadata(
+        name="Fake Tool", desktop_file="fake_tool.desktop", icon="x", desc="d"))
+    assert installer.install_dependencies()
+    assert bool(calls) == runs_pip

@@ -18,6 +18,9 @@ Stability for what counts as the public surface.
   contained a space: cron hands the line to `/bin/sh`, which split the path.
   Both are now quoted with `shlex.quote`. A plain path stays unquoted, so lines
   already in a crontab still match.
+- `ToolInstaller.install_dependencies` ran `pip install -r` on a
+  `requirements.txt` that held only comments and blank lines, and pip warned
+  about an empty file in the install log. It now skips pip for such a file.
 
 ## [1.3.0] - 2026-09-29
 
