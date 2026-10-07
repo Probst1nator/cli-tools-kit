@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-07
+
 ### Added
 - `--check`, the login check, removes orphaned shortcuts and aliases: those
   whose tool's `main.py` is gone because the tool was deleted, archived or
