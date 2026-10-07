@@ -332,6 +332,7 @@ def cli_check() -> int:
         • a currently-installed SKILL.md that has drifted                 -> idempotent --install-skill
           (only touched when the skill is already present, so a skill the
            user deliberately removed is never silently re-added)
+        • an orphaned shortcut or alias (its tool's main.py is gone)      -> removed, like --cleanup --yes
 
       NOTIFY (would touch the network or add new capability — needs a human):
         • a discovered tool that is not installed (installing it may pip)
@@ -388,6 +389,24 @@ def cli_check() -> int:
         #     a bashrc function the alias check can't see).
         if not shortcut_installed and not skill_present:
             new_tools.append(t.name)
+
+    # (4) orphaned shortcut or alias -> removed. Its tool's main.py is gone, so
+    #     it can start nothing. This runs after (1): a tool that only moved has
+    #     its shortcut rewritten there and is no orphan here. An orphan whose
+    #     tool's parent directory is gone too stays: a whole tree missing at
+    #     login (an unmounted drive, a folder not synced yet) may come back.
+    #     The GUI and --cleanup still remove those.
+    if state.CHECK_RECONCILE_SHORTCUTS:
+        for o in sweep.find_orphan_desktop_files():
+            if not os.path.isdir(os.path.dirname(os.path.normpath(o.tool_path))):
+                continue
+            ok, msg = sweep.remove_orphan_desktop_file(o)
+            (applied if ok else failed).append(f"{o.name}: {'orphan shortcut removed' if ok else msg}")
+        for o in sweep.find_orphan_aliases():
+            if not os.path.isdir(os.path.dirname(os.path.dirname(o.script_path))):
+                continue
+            ok, msg = sweep.remove_orphan_alias(o)
+            (applied if ok else failed).append(f"{o.name}: {'orphan alias removed' if ok else msg}")
 
     if applied:
         install.refresh_desktop_database()

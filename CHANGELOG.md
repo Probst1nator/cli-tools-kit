@@ -7,6 +7,16 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Added
+- `--check`, the login check, removes orphaned shortcuts and aliases: those
+  whose tool's `main.py` is gone because the tool was deleted, archived or
+  moved out of the tree. Before, only the window's start, `--cleanup --yes` and
+  `--update-all` did, so a host where nobody opened the installer kept them. It
+  runs after the shortcut reconcile, so a tool that only moved keeps its
+  rewritten shortcut. It skips an orphan whose tool's parent directory is
+  missing too (a whole tree absent at login), and it does nothing when
+  `check_reconcile_shortcuts` is `False`.
+
 ### Changed
 - `--update-all` no longer runs pip. It reinstalls every installed tool with
   `skip_deps=True`, as the `--check` reconcile already did, so it only refreshes

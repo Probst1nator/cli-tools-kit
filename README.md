@@ -236,7 +236,7 @@ Keyword-only; every argument defaults to `None`, meaning "leave the default".
 | `discovery_roots` | `[root_dir]` | Scan these directories instead — for tools that live in a subdirectory or several. |
 | `group_by` | `"capability"` | Which field bands the GUI rows: `"capability"` (the advertised word) or `"category"` (whatever your discoverer assigned). Anything else raises `ValueError`. |
 | `pre_discovery` | `None` | `callable(refresh: bool)` run once before scanning, for side effects like cloning repos into a cache. Skipped on the `--check` path so a login hook never touches the network. |
-| `check_reconcile_shortcuts` | `True` | Whether `--check` also reinstalls drifted shortcuts. Set `False` when your tools' `--install` has side effects unsafe for a login hook, making `--check` skill-only. |
+| `check_reconcile_shortcuts` | `True` | Whether `--check` also reinstalls drifted shortcuts and removes orphaned ones (their tool's `main.py` is gone). Set `False` when your tools' `--install` has side effects unsafe for a login hook, making `--check` skill-only. |
 | `skill_targets` | `[claude_target()]` | Where the text screen can register a skill — see "The text screen" below. |
 | `tui_preselect` | `None` | Initial ticks on the text screen: `None` ticks everything on a host with nothing installed yet and otherwise mirrors the host; `True`/`False` force one or the other. |
 | `window_title` | identity's title | GUI window title. |

@@ -188,6 +188,49 @@ def test_check_reconciles_a_drifted_shortcut(engine, monkeypatch) -> None:
     assert not engine.needs_update(tool)
 
 
+def test_check_removes_what_a_deleted_tool_left(engine, fake_tree: Path, monkeypatch) -> None:
+    monkeypatch.setattr(engine, "_notify_send", lambda *a, **k: None)
+    tools = _tools(engine)
+    for alias in ("clitool", "guitool"):
+        assert engine.install_tool(tools[alias], skip_deps=True)[0]
+    shutil.rmtree(fake_tree / "clitool")
+    shutil.rmtree(fake_tree / "guitool")
+    assert engine.find_orphan_aliases()
+
+    assert engine.cli_check() == 0
+    assert engine.find_orphan_aliases() == []
+    assert engine.find_orphan_desktop_files() == []
+
+
+@pytest.mark.skipif(os.name == "nt", reason="a .lnk is binary; needs_update skips it")
+def test_check_rewrites_a_moved_tool_instead_of_removing_it(engine, fake_tree: Path,
+                                                            monkeypatch) -> None:
+    """The old shortcut points at a missing main.py, like an orphan's. The
+    reconcile runs first and rewrites it, so the sweep must find nothing."""
+    monkeypatch.setattr(engine, "_notify_send", lambda *a, **k: None)
+    assert engine.install_tool(_tools(engine)["guitool"], skip_deps=True)[0]
+    (fake_tree / "guitool").rename(fake_tree / "guitool_moved")
+
+    assert engine.cli_check() == 0
+    moved = _tools(engine)["guitool"]
+    assert engine.is_installed(moved)
+    assert not engine.needs_update(moved)
+
+
+@pytest.mark.parametrize("case", ["whole tree gone", "reconcile off"])
+def test_check_keeps_an_orphan(engine, fake_tree: Path, monkeypatch, case: str) -> None:
+    monkeypatch.setattr(engine, "_notify_send", lambda *a, **k: None)
+    assert engine.install_tool(_tools(engine)["clitool"], skip_deps=True)[0]
+    if case == "whole tree gone":   # an unmounted drive or an unsynced folder
+        shutil.rmtree(fake_tree)
+    else:
+        monkeypatch.setattr(engine, "CHECK_RECONCILE_SHORTCUTS", False)
+        shutil.rmtree(fake_tree / "clitool")
+
+    assert engine.cli_check() == 0
+    assert [o.name for o in engine.find_orphan_aliases()] == ["clitool"]
+
+
 @POSIX_ONLY
 def test_a_failing_crontab_read_never_wipes_the_crontab(engine, tmp_path: Path,
                                                         monkeypatch) -> None:
