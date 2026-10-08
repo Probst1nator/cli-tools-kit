@@ -377,15 +377,20 @@ sys.exit(plugins.main("clawd@clawd", "Probst1nator/clawd"))
 - **`--remove`** runs `claude plugin uninstall <id> --scope user`. The
   marketplace stays added.
 - **Updates** are Claude Code's (`claude plugin update`). `needs_update` is
-  always false for a plugin row, and with `TOOLS_INSTALLER_SKIP_DEPS=1` (the
-  login check, `--update-all`) `--install` touches no network and installs
-  nothing new.
+  always false for a plugin row, the login check (`--check`) skips plugin rows
+  (every `claude` call contacts Anthropic), and with `TOOLS_INSTALLER_SKIP_DEPS=1`
+  (`--update-all`) `--install` installs nothing new.
 - **Config directory.** A row writes to `~/.claude`: `CLAUDE_CONFIG_DIR` is
   removed from the environment of the `claude` calls. A wrapper offers further
   directories with `run(plugin_targets=[PluginTarget("fauclaude", "fauclaude
   (~/.claude-fau)", "~/.claude-fau")])`, together with the default target
   first; each plugin is then listed once per target, the extra rows named
-  `<name> (<key>)`, and those pass `--claude-config-dir DIR` to the tool.
+  `<name> (<key>)`, and those pass `--claude-config-dir DIR` to the tool. A
+  directory without `plugins/installed_plugins.json` counts as having nothing
+  installed and `claude` is not started for it. Installing into a directory
+  other than the default needs its `settings.json`: the program that owns the
+  directory has to set it up first (fauclaude seeds its own only while that file
+  is missing).
 - **Exclusive rows.** The text screen never preselects a plugin row, and after
   an Apply both screens untick a row whose plugin another row disabled.
   `--apply` matches a plugin row by its own name, not by its directory, and

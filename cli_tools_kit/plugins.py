@@ -19,9 +19,9 @@ A wrapper offers further directories through ``run(plugin_targets=[...])``;
 discovery then lists each plugin once per target, and the row passes its
 directory to the tool as ``--claude-config-dir DIR``.
 
-Nothing here reaches the network except ``claude plugin install``, and that
-is skipped when ``TOOLS_INSTALLER_SKIP_DEPS`` is set (the login check and
-``--update-all``).
+``claude`` itself contacts Anthropic on every call, so the login check
+(``--check``) skips plugin rows. ``claude plugin install`` is skipped when
+``TOOLS_INSTALLER_SKIP_DEPS`` is set (``--update-all``).
 """
 
 from __future__ import annotations
@@ -100,8 +100,13 @@ def installed_plugins(config_dir: str = "") -> List[dict]:
     """``claude plugin list --json`` for one config dir; [] when it fails.
 
     Cached until Claude Code rewrites its plugin files, because one call takes
-    most of a second and a screen asks once per row and redraw.
+    most of a second and a screen asks once per row and redraw. Without an
+    ``installed_plugins.json`` nothing is installed there, and ``claude`` is
+    not started: it would create the directory.
     """
+    base = _config_dir(config_dir)
+    if not os.path.isfile(os.path.join(base, "plugins", "installed_plugins.json")):
+        return []
     sig = _signature(config_dir)
     with _lock:
         hit = _cache.get(config_dir)
@@ -152,7 +157,16 @@ def _message(result: subprocess.CompletedProcess) -> str:
 
 
 def install(plugin_id: str, marketplace: str, config_dir: str = "", log=print) -> bool:
-    """Install and enable *plugin_id*, then disable its same-name siblings."""
+    """Install and enable *plugin_id*, then disable its same-name siblings.
+
+    A config directory other than the default must have been set up by the
+    program that uses it: a launcher such as fauclaude seeds its directory
+    only while ``settings.json`` is missing, and installing would write one.
+    """
+    if config_dir and not os.path.isfile(os.path.join(_config_dir(config_dir), "settings.json")):
+        log(f"{config_dir} is not set up yet: start the program that uses it once, "
+            "then install again")
+        return False
     if not is_enabled(plugin_id, config_dir):
         if os.environ.get("TOOLS_INSTALLER_SKIP_DEPS") == "1":
             log(f"Skipped {plugin_id}: installing a plugin needs the network, "

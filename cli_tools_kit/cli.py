@@ -356,6 +356,8 @@ def cli_check() -> int:
     new_skills: list[str] = []   # installed tool, advertised skill absent -> human decides
 
     for t in tools:
+        if t.claude_plugin:
+            continue  # no shortcut or skill to reconcile, and `claude` would go online
         shortcut_installed = install.is_installed(t)
         skill_present = bool(t.skill_name) and install._skill_installed(t.skill_name)
         # (1) drifted shortcut -> network-free refresh. Count it only if the

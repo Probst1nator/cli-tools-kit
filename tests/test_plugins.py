@@ -114,6 +114,13 @@ def test_config_dir_targets_that_dir_and_the_default_drops_an_inherited_one(
         fake_claude, sandbox_home, tmp_path, monkeypatch):
     _, calls = fake_claude
     fau = tmp_path / "claude-fau"
+    # Not set up yet: nothing is installed, claude is not started, install refuses.
+    assert not install.is_installed(_row("clawd@clawd", str(fau)))
+    assert plugins.main("clawd@clawd", "Probst1nator/clawd",
+                        ["--install", plugins.CONFIG_DIR_ARG, str(fau)]) == 1
+    assert calls() == [] and not fau.exists()
+    fau.mkdir()
+    (fau / "settings.json").write_text("{}")
     assert plugins.main("clawd@clawd", "Probst1nator/clawd",
                         ["--install", plugins.CONFIG_DIR_ARG, str(fau)]) == 0
     assert install.is_installed(_row("clawd@clawd", str(fau)))
@@ -134,7 +141,7 @@ def test_skip_deps_never_installs(fake_claude, monkeypatch, capsys):
     monkeypatch.setenv("TOOLS_INSTALLER_SKIP_DEPS", "1")
     assert plugins.main("clawd@clawd", "Probst1nator/clawd", ["--install"]) == 0
     assert "Skipped" in capsys.readouterr().out
-    assert [c["args"][0] for c in calls()] == ["list"]
+    assert not any(c["args"][0] == "install" for c in calls())
 
 
 def test_remove_uninstalls_and_needs_update_stays_false(fake_claude):
@@ -209,3 +216,36 @@ def test_advertise_and_discovery_carry_the_plugin(tmp_path):
     assert entry.alias == ""
     assert entry.claude_plugin == "clawd@clawd-matsci"
     assert entry.claude_marketplace == "AutomatedAlchemy/clawd-matsci"
+
+
+def test_gui_apply_lets_the_newly_ticked_plugin_win(fake_claude, monkeypatch):
+    """Both rows ticked, one installed: the other installs and stays the one enabled."""
+    pytest.importorskip("tkinter")
+    import queue
+    from types import SimpleNamespace
+    from cli_tools_kit import gui_installer as gi
+
+    seed, _ = fake_claude
+    seed([{"id": "clawd@clawd-matsci", "scope": "user", "enabled": True}])
+    rows = [_row("clawd@prob-tools"), _row("clawd@clawd-matsci")]
+    monkeypatch.setattr(install, "install_tool", lambda tool, skip_deps=False: (
+        plugins.install(tool.claude_plugin, tool.claude_marketplace, tool.claude_config_dir,
+                        log=lambda _msg: None), ""))
+    app = SimpleNamespace(tools=rows, _extract_hint_from_output=lambda _out: None)
+    ticked = {f"{r.category}_{r.name}": True for r in rows}
+    gi.InstallerApp._apply_worker(app, ticked, {}, {}, queue.Queue())
+
+    assert install.is_installed(rows[0])
+    assert not install.is_installed(rows[1])
+
+
+def test_the_login_check_never_starts_claude(engine, fake_claude, monkeypatch):
+    seed, _ = fake_claude
+    seed([{"id": "clawd@clawd", "scope": "user", "enabled": True}])
+    monkeypatch.setattr(engine, "_notify_send", lambda *a, **k: None)
+    monkeypatch.setattr(discovery, "discover_tools", lambda run_pre=True: [_row("clawd@clawd")])
+
+    def no_claude(*_a, **_k):
+        raise AssertionError("the login check started claude")
+    monkeypatch.setattr(plugins, "_claude", no_claude)
+    assert engine.cli_check() == 0

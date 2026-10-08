@@ -3677,11 +3677,16 @@ class InstallerApp:
         autostart_enabled = autostart_disabled = 0
         skills_installed = skills_removed = 0
         hint_command = None
+        # Installing one Claude Code plugin row disables its namesakes, so their
+        # state is read once up front; read in the loop, a namesake still ticked
+        # would be installed again and undo the choice.
+        plugin_was = {f"{t.category}_{t.name}": install.is_installed(t)
+                      for t in self.tools if t.claude_plugin}
         try:
             for tool in self.tools:
                 key = f"{tool.category}_{tool.name}"
                 should_be = check_state.get(key, False)
-                currently = install.is_installed(tool)
+                currently = plugin_was[key] if key in plugin_was else install.is_installed(tool)
                 stale = install.needs_update(tool)
 
                 if should_be and not currently:
