@@ -112,6 +112,8 @@ def default_rows(tools: List[ToolEntry], preselect: Optional[bool] = None,
     ``preselect=None`` ticks everything on a host where none of the tools is
     installed yet (a first run) and otherwise mirrors what is installed.
     ``True`` always ticks everything, ``False`` always mirrors the host.
+    A Claude Code plugin row always mirrors the host: several rows can name
+    one plugin, and installing one disables the others.
     """
     installed = [gi.is_installed(t) for t in tools]
     if preselect is None:
@@ -120,7 +122,7 @@ def default_rows(tools: List[ToolEntry], preselect: Optional[bool] = None,
         skill_installed = lambda tool: gi._skill_installed(tool.skill_name)  # noqa: E731
     rows = []
     for tool, is_in in zip(tools, installed):
-        want = True if preselect else is_in
+        want = True if preselect and not tool.claude_plugin else is_in
         skill = bool(tool.skill_name) and (want if preselect else skill_installed(tool))
         rows.append(Row(tool, want, skill))
     return rows
@@ -252,9 +254,13 @@ def summary(result: Dict[str, object]) -> str:
 
 def _matches(tool: ToolEntry, name: str) -> bool:
     name = name.strip().lower()
-    return name in {tool.alias.lower(), tool.name.lower(), tool.skill_name.lower(),
-                    tool.desktop_file.lower().removesuffix(".desktop"),
-                    os.path.basename(os.path.dirname(tool.script_path)).lower()}
+    names = {tool.alias.lower(), tool.name.lower(), tool.skill_name.lower(),
+             tool.desktop_file.lower().removesuffix(".desktop")}
+    # The directory name stands for every row of a tool, but plugin rows
+    # exclude each other, so those are matched by their own names only.
+    if not tool.claude_plugin:
+        names.add(os.path.basename(os.path.dirname(tool.script_path)).lower())
+    return name in names - {""}
 
 
 def apply_headless(tools: List[ToolEntry], names: str, target_keys: str = "claude",
@@ -315,6 +321,10 @@ class _State:
 
     def refresh_status(self) -> None:
         for i, row in enumerate(self.rows):
+            if row.tool.claude_plugin:
+                # Installing one plugin row can disable another; untick it so
+                # the next Apply does not switch it back on.
+                row.install = gi.is_installed(row.tool)
             if gi.is_installed(row.tool):
                 self.status[i] = "update" if gi.needs_update(row.tool) else "installed"
             else:
@@ -394,7 +404,8 @@ def _draw(scr, st: _State) -> None:
             skill = "[x]" if row.skill else "[ ]"
         else:
             skill = "   "
-        handle = tool.alias if "Icon" not in tool.tags else tool.desktop_file
+        handle = tool.claude_plugin or (tool.alias if "Icon" not in tool.tags
+                                         else tool.desktop_file)
         line = (f"{inst}   {skill}    {_fit(tool.name, name_w):<{name_w}}  "
                 f"{_fit(handle, 20):<20}  {st.status.get(i, '')}")
         attr = curses.A_REVERSE if i == st.cursor and not st.busy else 0

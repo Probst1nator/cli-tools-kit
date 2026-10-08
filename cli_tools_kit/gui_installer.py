@@ -2625,7 +2625,9 @@ class InstallerApp:
     def _format_desc_with_alias(self, tool: discovery.ToolEntry) -> str:
         """Format tool description with alias hint for CLI tools."""
         desc_text = tool.description
-        if "Icon" not in tool.tags and tool.alias:
+        if tool.claude_plugin:
+            desc_text = f"{tool.description}  ->  {tool.claude_plugin}"
+        elif "Icon" not in tool.tags and tool.alias:
             desc_text = f"{tool.description}  ->  {tool.alias}"
         return desc_text
 
@@ -3836,6 +3838,12 @@ class InstallerApp:
 
     def _finish_apply_changes(self, result):
         """Main-thread finalize after an _apply_changes worker completes."""
+        # Installing one Claude Code plugin row can disable another; untick it
+        # so the next Apply does not switch it back on.
+        for tool in self.tools:
+            var = self.check_vars.get(f"{tool.category}_{tool.name}")
+            if tool.claude_plugin and var is not None:
+                var.set(install.is_installed(tool))
         self._update_status_labels()
         errors = result["errors"]
 

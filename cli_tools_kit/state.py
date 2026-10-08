@@ -105,6 +105,11 @@ CHECK_RECONCILE_SHORTCUTS = True
 # the initial ticks (None = tick everything on a host with nothing installed
 # yet, else mirror the host; True/False force one or the other).
 SKILL_TARGETS: Optional[List] = None
+
+# PLUGIN_TARGETS lists the Claude Code config directories a plugin tool can be
+# installed into (plugins.PluginTarget). None = the default ~/.claude only;
+# discovery lists a plugin once per target (discovery.expand_plugin_targets).
+PLUGIN_TARGETS: Optional[List] = None
 TUI_PRESELECT: Optional[bool] = None
 
 # Identity of the login update-check artifacts. Distinct names let several

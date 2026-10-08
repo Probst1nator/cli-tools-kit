@@ -554,6 +554,8 @@ def main():
                 status = " "
             tags_str = ",".join(t.tags) if t.tags else "-"
             alias_info = f" ({t.alias})" if "Icon" not in t.tags and t.alias else ""
+            if t.claude_plugin:
+                alias_info = f" ({t.claude_plugin})"
             # For stale tools, show what changed
             if stale and "Icon" not in t.tags:
                 old_alias = install._find_alias_for_script(t.script_path)
@@ -586,6 +588,7 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         pre_discovery: Optional[Callable] = None,
         check_reconcile_shortcuts: Optional[bool] = None,
         skill_targets: Optional[List] = None, tui_preselect: Optional[bool] = None,
+        plugin_targets: Optional[List] = None,
         autostart_check_desktop_name: Optional[str] = None,
         check_log_name: Optional[str] = None, check_state_name: Optional[str] = None,
         self_desktop_file: Optional[str] = None, self_desktop_name: Optional[str] = None,
@@ -612,6 +615,10 @@ def run(*, identity: Optional[InstallerIdentity] = None,
 
     ``upgrade_repos`` lists ``(name, path)`` of the tool repos the upgrade may
     pull; ``sources.run_installer`` fills it with the repos it cloned.
+
+    ``plugin_targets`` lists the Claude Code config directories a plugin tool
+    can go into (``plugins.PluginTarget``); each plugin is then offered once
+    per target. Without it a plugin goes into ``~/.claude``.
 
     ``prune`` adds directory names the default wider walk never enters, on top
     of ``DISCOVERY_PRUNE``. It does nothing when a wrapper passes its own
@@ -657,6 +664,8 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         state.SKILL_TARGETS = list(skill_targets)
     if tui_preselect is not None:
         state.TUI_PRESELECT = tui_preselect
+    if plugin_targets is not None:
+        state.PLUGIN_TARGETS = list(plugin_targets)
     if autostart_check_desktop_name is not None:
         state.AUTOSTART_CHECK_DESKTOP_NAME = autostart_check_desktop_name
     if check_log_name is not None:

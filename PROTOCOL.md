@@ -49,6 +49,8 @@ Each dict in the list describes one installable variant of the tool.
 | `cron_schedule` | str | no | — | Schedule for a non-`Icon` tool's autostart (e.g. `"@reboot"`). Without it, a tool with no `Icon` tag has no autostart mechanism at all. |
 | `cron_args` | list[str] | no | `[]` | Args for the cron invocation, when they differ from `args`. |
 | `autostart_conditions` | list[str] | no | `[]` | Condition kinds this tool's autostart supports: `"time_window"`, `"network"`. Declares only the kinds — the values are the user's and live in the installer's config. See "Conditional autostart" below. |
+| `claude_plugin` | str | no | — | A Claude Code plugin id, `name@marketplace`. The row installs that plugin instead of a shortcut or alias. See "Claude Code plugins" below. |
+| `claude_marketplace` | str | with `claude_plugin` | — | Where the plugin's marketplace comes from: a GitHub `owner/repo`, a git or https URL, or a local directory. |
 
 All of these are fields of `ToolMetadata`, and `advertise()` emits each optional
 one only when it is set. A record that never touched them is byte-identical to
@@ -77,6 +79,8 @@ Tools declare their capabilities via `tags`:
 - **`GUI`** — has a graphical window (tkinter / Qt / GTK / etc.)
 - **`CLI`** — runs in the terminal
 - **`Icon`** — gets a `.desktop` shortcut in `~/.local/share/applications/`
+- **`Plugin`** — installs a Claude Code plugin; no shortcut and no alias (the
+  default tag when `claude_plugin` is set)
 
 Without `Icon`, the tool is installed as a bash alias in `~/.tools_aliases`
 (which the installer auto-sources from `~/.bashrc` on first install). On
@@ -341,6 +345,52 @@ When a tool reports `"stale"`, a compliant parent flags the row (e.g.
 `--install-skill` on apply to refresh the skill in place. Tools that omit
 `skill_status` keep the old behaviour — the installer only distinguishes
 installed-vs-absent.
+
+## Claude Code plugins (`claude_plugin`)
+
+A tool can stand for a Claude Code plugin. It advertises the plugin id and its
+marketplace source, and its `--install` and `--remove` hand over to the kit:
+
+```python
+import json, sys
+
+if "--advertise" in sys.argv:          # stdlib only, before anything else
+    print(json.dumps([{
+        "name": "clawd", "desktop_file": "clawd.desktop", "icon": "",
+        "desc": "Clawd runs around above the prompt.", "tags": ["Plugin"],
+        "capability": "claude-mod",
+        "claude_plugin": "clawd@clawd", "claude_marketplace": "Probst1nator/clawd",
+    }]))
+    sys.exit(0)
+
+from cli_tools_kit import plugins
+sys.exit(plugins.main("clawd@clawd", "Probst1nator/clawd"))
+```
+
+- **Installed** means the id is installed in the user scope and enabled, as
+  `claude plugin list --json` reports it. A disabled plugin counts as not
+  installed, and installing it enables it again.
+- **`--install`** runs `claude plugin install <name> --marketplace <source>
+  --scope user`, which adds the marketplace when it is missing. Then it disables
+  every other enabled user-scope plugin with the same name: `clawd@a` and
+  `clawd@b` would register the same commands and hooks.
+- **`--remove`** runs `claude plugin uninstall <id> --scope user`. The
+  marketplace stays added.
+- **Updates** are Claude Code's (`claude plugin update`). `needs_update` is
+  always false for a plugin row, and with `TOOLS_INSTALLER_SKIP_DEPS=1` (the
+  login check, `--update-all`) `--install` touches no network and installs
+  nothing new.
+- **Config directory.** A row writes to `~/.claude`: `CLAUDE_CONFIG_DIR` is
+  removed from the environment of the `claude` calls. A wrapper offers further
+  directories with `run(plugin_targets=[PluginTarget("fauclaude", "fauclaude
+  (~/.claude-fau)", "~/.claude-fau")])`, together with the default target
+  first; each plugin is then listed once per target, the extra rows named
+  `<name> (<key>)`, and those pass `--claude-config-dir DIR` to the tool.
+- **Exclusive rows.** The text screen never preselects a plugin row, and after
+  an Apply both screens untick a row whose plugin another row disabled.
+  `--apply` matches a plugin row by its own name, not by its directory.
+- The `claude` command must be on the PATH; without it nothing counts as
+  installed and `--install` says so.
 
 ## Known dialect: system-script menus
 

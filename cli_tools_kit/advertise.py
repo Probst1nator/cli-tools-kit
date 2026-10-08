@@ -50,7 +50,8 @@ def advertise(metadata: Union[ToolMetadata, List[ToolMetadata]]) -> NoReturn:
     items = list(metadata) if isinstance(metadata, (list, tuple)) else [metadata]
     out = []
     for m in items:
-        tags = m.tags if m.tags else ["GUI", "Icon"]
+        plugin = getattr(m, "claude_plugin", None)
+        tags = m.tags if m.tags else (["Plugin"] if plugin else ["GUI", "Icon"])
         record = {
             "name": m.name,
             "desktop_file": m.desktop_file,
@@ -62,13 +63,15 @@ def advertise(metadata: Union[ToolMetadata, List[ToolMetadata]]) -> NoReturn:
         }
         # alias is surfaced when the tool is CLI-only (no Icon tag) OR when
         # an Icon tool explicitly opts into a shell alias alongside the .desktop.
-        if "Icon" not in tags or m.alias:
+        # A plugin row has neither.
+        if ("Icon" not in tags and not plugin) or m.alias:
             record["alias"] = m.alias or os.path.splitext(m.desktop_file)[0]
             if m.alias_args is not None:
                 record["alias_args"] = list(m.alias_args)
         # Optional fields are emitted only when set, so a tool that never
         # touched them produces exactly the pre-0.2.0 record.
-        for key in ("capability", "domain", "category", "skill_name", "skill_status"):
+        for key in ("capability", "domain", "category", "skill_name", "skill_status",
+                    "claude_plugin", "claude_marketplace"):
             value = getattr(m, key, None)
             if value:
                 record[key] = value

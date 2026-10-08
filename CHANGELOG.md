@@ -7,6 +7,19 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Added
+- Claude Code plugins as tools. A tool advertises `claude_plugin`
+  (`name@marketplace`) and `claude_marketplace` (`owner/repo`, URL or path),
+  and its `--install`/`--remove` call `cli_tools_kit.plugins.main`. The
+  installer counts the row as installed when `claude plugin list --json` shows
+  the plugin enabled in the user scope; the listing is cached until Claude Code
+  rewrites its plugin files. Installing a plugin disables the other enabled
+  plugins of the same name. New tag `Plugin`. See PROTOCOL.md § Claude Code
+  plugins.
+- `run(plugin_targets=[...])` (`plugins.PluginTarget`) lists each plugin once
+  per Claude Code config directory, for a wrapper whose users also run Claude
+  Code under another `CLAUDE_CONFIG_DIR`.
+
 ## [1.4.0] - 2026-10-07
 
 ### Added

@@ -82,6 +82,12 @@ class ToolMetadata:
     # and nothing more: the values behind them are the user's, and the
     # installer stores them per host. See cli_tools_kit.autostart_gate.
     autostart_conditions: Optional[list] = None
+    # A Claude Code plugin instead of a shortcut or alias (PROTOCOL.md § Claude
+    # Code plugins): the plugin id, "name@marketplace", and the source
+    # `claude plugin install --marketplace` takes (owner/repo, URL or path).
+    # The tool's --install/--remove call cli_tools_kit.plugins.main.
+    claude_plugin: Optional[str] = None
+    claude_marketplace: Optional[str] = None
 
 
 class ToolInstaller:

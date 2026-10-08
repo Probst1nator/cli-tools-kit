@@ -10,6 +10,7 @@ from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, NamedTuple, Optional
 
 from . import host
+from . import plugins
 from . import state
 from .autostart_gate import KNOWN_CONDITIONS
 
@@ -34,6 +35,9 @@ class ToolEntry(NamedTuple):
     skill_name: str = ""             # If non-empty, tool can install a Claude Code skill via --install-skill / --uninstall-skill
     skill_status: str = ""           # Advertised skill freshness: "absent"|"current"|"stale" ("" = tool didn't report it)
     autostart_conditions: List[str] = []  # Conditions this tool's autostart supports ("time_window", "network"); the values live in the installer's autostart.json, never in the tool. See cli_tools_kit.autostart_gate.
+    claude_plugin: str = ""        # Claude Code plugin id ("name@marketplace"); the row installs that plugin instead of a shortcut or alias. See cli_tools_kit.plugins.
+    claude_marketplace: str = ""   # Where the plugin's marketplace comes from (owner/repo, URL or path)
+    claude_config_dir: str = ""    # Which Claude Code config dir the row targets ("" = ~/.claude); set by discovery from PLUGIN_TARGETS, not advertised
 
 
 def _group_label(entry: "ToolEntry") -> str:
@@ -103,10 +107,12 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
                     else:
                         tags = ["GUI", "Icon"]
 
-                # Alias is required if no Icon tag
+                # Alias is required if no Icon tag, except for a plugin row,
+                # which installs neither a shortcut nor an alias.
                 has_icon = "Icon" in tags
                 alias = item.get("alias", "")
-                if not has_icon and not alias:
+                claude_plugin = str(item.get("claude_plugin", "") or "")
+                if not has_icon and not alias and not claude_plugin:
                     # Default alias from desktop_file stem
                     alias = item.get("desktop_file", "").replace(".desktop", "")
 
@@ -135,12 +141,45 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
                         c for c in item.get("autostart_conditions", []) or []
                         if c in KNOWN_CONDITIONS
                     ],
+                    claude_plugin=claude_plugin,
+                    claude_marketplace=str(item.get("claude_marketplace", "") or ""),
                 ))
     except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
         # If a tool fails to advertise, it is ignored.
         pass
 
     return entries
+
+
+def expand_plugin_targets(tools: List[ToolEntry], targets) -> List[ToolEntry]:
+    """One row per plugin target for every tool that installs a Claude Code plugin.
+
+    A target without a directory (the default ``~/.claude``) keeps the
+    advertised row. Every other target gets a copy with its key appended to the
+    name and the desktop_file, which the screens key rows on, and passes its
+    directory to the tool as ``--claude-config-dir``. Without targets every
+    plugin row targets the default.
+    """
+    if not targets:
+        return tools
+    out: List[ToolEntry] = []
+    for tool in tools:
+        if not tool.claude_plugin:
+            out.append(tool)
+            continue
+        for target in targets:
+            if not target.config_dir:
+                out.append(tool)
+                continue
+            stem = os.path.splitext(tool.desktop_file)[0]
+            out.append(tool._replace(
+                name=f"{tool.name} ({target.key})",
+                desktop_file=f"{stem}-{target.key}.desktop",
+                description=f"{tool.description} Installs into {target.label}.",
+                args=list(tool.args) + [plugins.CONFIG_DIR_ARG, target.config_dir],
+                claude_config_dir=target.config_dir,
+            ))
+    return out
 
 
 def _is_tool_dir(path: str) -> bool:
@@ -277,6 +316,7 @@ def discover_tools(run_pre: bool = True) -> List[ToolEntry]:
         with ThreadPoolExecutor(max_workers=min(len(pairs), 16)) as pool:
             for entries in pool.map(lambda p: get_metadata_native(*p), pairs):
                 tools.extend(entries)
+    tools = expand_plugin_targets(tools, state.PLUGIN_TARGETS)
     # Take note of skills whose installed copy is out of date vs. the tool's
     # bundled version (reported via the --advertise `skill_status` field) and
     # suggest the update. Printed once per discovery so a terminal run surfaces

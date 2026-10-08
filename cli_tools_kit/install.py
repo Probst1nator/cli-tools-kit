@@ -10,6 +10,7 @@ from typing import Callable, NamedTuple, Optional
 
 from . import discovery
 from . import host
+from . import plugins
 from . import state
 
 
@@ -126,6 +127,8 @@ def _save_aliases(aliases: dict) -> None:
 
 def is_installed(tool: discovery.ToolEntry) -> bool:
     """Check if a tool is installed based on its tags."""
+    if tool.claude_plugin:
+        return plugins.is_enabled(tool.claude_plugin, tool.claude_config_dir)
     has_icon = "Icon" in tool.tags
     if has_icon:
         # Check for the .desktop file (a .lnk on Windows)
@@ -140,7 +143,12 @@ def needs_update(tool: discovery.ToolEntry) -> bool:
 
     Returns True if the tool is installed but its configuration differs from
     what's advertised (different alias name, different args, etc.)
+
+    Always False for a plugin row: Claude Code updates its own plugins, and
+    the paths that act on this (``--check``, ``--update-all``) stay offline.
     """
+    if tool.claude_plugin:
+        return False
     has_icon = "Icon" in tool.tags
     if has_icon:
         if host.IS_WINDOWS:
