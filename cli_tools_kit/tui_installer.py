@@ -271,7 +271,8 @@ def apply_headless(tools: List[ToolEntry], names: str, target_keys: str = "claud
     targets = list(targets) if targets else [claude_target()]
     wanted = [n.strip() for n in names.split(",") if n.strip()]
     if wanted == ["all"]:
-        chosen = list(tools)
+        # Plugin rows exclude each other, so "all" leaves them to be named.
+        chosen = [t for t in tools if not t.claude_plugin]
     else:
         chosen = []
         for name in wanted:

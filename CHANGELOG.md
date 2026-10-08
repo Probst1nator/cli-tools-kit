@@ -14,8 +14,8 @@ Stability for what counts as the public surface.
   installer counts the row as installed when `claude plugin list --json` shows
   the plugin enabled in the user scope; the listing is cached until Claude Code
   rewrites its plugin files. Installing a plugin disables the other enabled
-  plugins of the same name. New tag `Plugin`. See PROTOCOL.md § Claude Code
-  plugins.
+  plugins of the same name, and `--apply all` leaves plugin rows out. New tag
+  `Plugin`. See PROTOCOL.md § Claude Code plugins.
 - `run(plugin_targets=[...])` (`plugins.PluginTarget`) lists each plugin once
   per Claude Code config directory, for a wrapper whose users also run Claude
   Code under another `CLAUDE_CONFIG_DIR`.

@@ -185,6 +185,14 @@ def test_plugin_rows_are_never_preselected_nor_matched_by_their_directory(monkey
     assert not tui_installer._matches(rows_in[0], "clawd")
     assert tui_installer._matches(rows_in[1], "clawd-matsci")
 
+    applied = []
+    monkeypatch.setattr(tui_installer, "execute", lambda steps, log: applied.extend(steps) or {})
+    monkeypatch.setattr(tui_installer.gi, "needs_update", lambda _tool: False)
+    assert tui_installer.apply_headless(rows_in, "all") == 0
+    assert applied == []
+    assert tui_installer.apply_headless(rows_in, "clawd-matsci") == 0
+    assert [s.tool.claude_plugin for s in applied] == ["clawd@clawd-matsci"]
+
 
 def test_advertise_and_discovery_carry_the_plugin(tmp_path):
     meta = ToolMetadata(name="clawd-matsci", desktop_file="clawd-matsci.desktop", icon="",

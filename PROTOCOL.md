@@ -388,7 +388,8 @@ sys.exit(plugins.main("clawd@clawd", "Probst1nator/clawd"))
   `<name> (<key>)`, and those pass `--claude-config-dir DIR` to the tool.
 - **Exclusive rows.** The text screen never preselects a plugin row, and after
   an Apply both screens untick a row whose plugin another row disabled.
-  `--apply` matches a plugin row by its own name, not by its directory.
+  `--apply` matches a plugin row by its own name, not by its directory, and
+  `--apply all` leaves plugin rows out.
 - The `claude` command must be on the PATH; without it nothing counts as
   installed and `--install` says so.
 
