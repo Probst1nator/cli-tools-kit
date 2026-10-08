@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.5.0] - 2026-10-08
+
 ### Added
 - Claude Code plugins as tools. A tool advertises `claude_plugin`
   (`name@marketplace`) and `claude_marketplace` (`owner/repo`, URL or path),
