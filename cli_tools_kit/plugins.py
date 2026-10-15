@@ -32,9 +32,13 @@ import shutil
 import subprocess
 import tempfile
 import threading
+from pathlib import Path
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
+from . import state
+
 CONFIG_DIR_ARG = "--claude-config-dir"
+CACHE_NAME = "claude-plugins.json"
 
 
 class PluginTarget(NamedTuple):
@@ -84,7 +88,7 @@ _cache: Dict[str, Tuple[tuple, List[dict]]] = {}
 
 
 def _signature(config_dir: str) -> tuple:
-    """Changes whenever Claude Code records an install, removal or toggle."""
+    """Changes whenever Claude Code records an install, removal or toggle, or is updated."""
     base = _config_dir(config_dir)
     sig = []
     for rel in (("plugins", "installed_plugins.json"), ("settings.json",)):
@@ -93,14 +97,55 @@ def _signature(config_dir: str) -> tuple:
             sig.append((st.st_mtime_ns, st.st_size))
         except OSError:
             sig.append(None)
+    # The listing is the CLI's output, so a new Claude Code version counts too.
+    exe = shutil.which("claude")
+    try:
+        real = os.path.realpath(exe) if exe else ""
+        sig.append((real, os.stat(real).st_mtime_ns) if real else None)
+    except OSError:
+        sig.append(None)
     return tuple(sig)
+
+
+def _cache_path() -> Path:
+    return Path(state.IDENTITY.cache_path) / CACHE_NAME
+
+
+def _load_listing(config_dir: str, sig: tuple) -> Optional[List[dict]]:
+    """The listing an earlier run saved for *config_dir*, if *sig* still matches."""
+    try:
+        entry = json.loads(_cache_path().read_text(encoding="utf-8")).get(_config_dir(config_dir))
+    except (OSError, ValueError, AttributeError):
+        return None
+    if (isinstance(entry, dict) and entry.get("sig") == json.dumps(sig)
+            and isinstance(entry.get("plugins"), list)):
+        return entry["plugins"]
+    return None
+
+
+def _save_listing(config_dir: str, sig: tuple, plugins: List[dict]) -> None:
+    path = _cache_path()
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data[_config_dir(config_dir)] = {"sig": json.dumps(sig), "plugins": plugins}
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except OSError:
+        pass   # the next start asks claude again
 
 
 def installed_plugins(config_dir: str = "") -> List[dict]:
     """``claude plugin list --json`` for one config dir; [] when it fails.
 
-    Cached until Claude Code rewrites its plugin files, because one call takes
-    most of a second and a screen asks once per row and redraw. Without an
+    Cached until Claude Code rewrites its plugin files or is updated, because
+    one call takes over a second and a screen asks once per row and redraw.
+    A successful listing is also saved in the identity's cache directory, so
+    the next start of the installer does not ask again. Without an
     ``installed_plugins.json`` nothing is installed there, and ``claude`` is
     not started: it would create the directory.
     """
@@ -112,13 +157,18 @@ def installed_plugins(config_dir: str = "") -> List[dict]:
         hit = _cache.get(config_dir)
         if hit and hit[0] == sig:
             return hit[1]
-        try:
-            result = _claude(["list", "--json"], config_dir)
-            plugins = json.loads(result.stdout) if result.returncode == 0 else []
-        except (PluginError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
-            plugins = []
-        if not isinstance(plugins, list):
-            plugins = []
+        plugins = _load_listing(config_dir, sig)
+        if plugins is None:
+            try:
+                result = _claude(["list", "--json"], config_dir)
+                plugins = json.loads(result.stdout) if result.returncode == 0 else []
+                ok = result.returncode == 0 and isinstance(plugins, list)
+            except (PluginError, OSError, subprocess.TimeoutExpired, json.JSONDecodeError):
+                plugins, ok = [], False
+            if not isinstance(plugins, list):
+                plugins = []
+            if ok:
+                _save_listing(config_dir, sig, plugins)
         _cache[config_dir] = (sig, plugins)
         return plugins
 

@@ -7,6 +7,20 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Fixed
+- The window took about 20 s to open for a 41-tool tree. While it was sized,
+  every description re-wrapped itself on each layout change, which changed the
+  layout again: 3482 re-wraps for 50 rows, 14 s. The re-wrapping now waits
+  until the window is sized, as it already did for the second layout pass.
+
+### Changed
+- The `claude plugin list --json` listing is also saved in the identity's
+  cache directory (`claude-plugins.json`), so a new start of the installer
+  does not call `claude` (1.4 s) until Claude Code rewrites its plugin files
+  or is updated.
+- `gui_installer` loads `_shared.gemini` when the icon dialog asks for prompt
+  variations, not at import (about 1.5 s).
+
 ## [1.5.0] - 2026-10-08
 
 ### Added

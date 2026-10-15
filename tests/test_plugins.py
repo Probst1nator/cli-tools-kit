@@ -161,6 +161,19 @@ def test_the_listing_is_cached_until_claude_writes_its_files(fake_claude):
     assert len(calls()) == 1
 
 
+def test_the_next_start_reads_the_saved_listing(fake_claude, monkeypatch):
+    seed, calls = fake_claude
+    seed([{"id": "clawd@clawd", "scope": "user", "enabled": True}])
+    assert install.is_installed(_row("clawd@clawd"))
+    monkeypatch.setattr(plugins, "_cache", {})          # a new process
+    assert install.is_installed(_row("clawd@clawd"))
+    assert len(calls()) == 1
+    seed([{"id": "clawd@clawd", "scope": "user", "enabled": False}])
+    monkeypatch.setattr(plugins, "_cache", {})
+    assert not install.is_installed(_row("clawd@clawd"))
+    assert len(calls()) == 2
+
+
 @pytest.mark.usefixtures("sandbox_home")
 def test_without_claude_nothing_is_installed_and_install_says_why(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("PATH", str(tmp_path / "empty"))

@@ -77,12 +77,19 @@ except ImportError:
     def get_all_usage_counts() -> Dict[str, int]:
         return {}
 
-# Gemini client for prompt variation suggestions (optional)
-try:
-    from _shared.gemini import GeminiClient, ModelTier
-except ImportError:
-    GeminiClient = None
-    ModelTier = None
+
+def _gemini_client():
+    """(GeminiClient, ModelTier) from the tree's ``_shared.gemini``, or (None, None).
+
+    Imported on first use, not with this module: it loads google.generativeai,
+    about 1.5 s, and only the icon dialog's prompt variations need it.
+    """
+    try:
+        from _shared.gemini import GeminiClient, ModelTier
+    except ImportError:
+        return None, None
+    return GeminiClient, ModelTier
+
 
 # ================= LAYOUT =================
 
@@ -385,7 +392,14 @@ class InstallerApp:
         table is shorter. Both stay within 90% of the monitor, which leaves
         room for panels and the title bar; beyond that the table scrolls. The
         minimum size keeps the footer's buttons from being cut off.
+
+        The descriptions' <Configure> handlers are held through both layout
+        passes. Left live, each re-wraps its label to the width of the layout
+        in progress, which changes that width and fires them again: the first
+        pass took 14 s for 50 rows that way. Once the window is shown they set
+        the exact wrap.
         """
+        self._wrap_held = True
         self.root.update_idletasks()
         mon_x, mon_y, mon_width, mon_height = self._get_primary_monitor_geometry()
         avail_w, avail_h = int(mon_width * 0.9), int(mon_height * 0.9)
@@ -403,10 +417,6 @@ class InstallerApp:
         window_width = min(max(rows_w, overhead + round(300 * scale)), avail_w)
 
         # Wrap the descriptions for that width before measuring the height.
-        # Their <Configure> handlers are held meanwhile: while the window is
-        # hidden they see the table's narrow first layout and wrap at 100 px.
-        # Once it is shown they set the exact wrap.
-        self._wrap_held = True
         for label in self._desc_labels:
             label.configure(wraplength=max(100, window_width - overhead))
         self.root.update_idletasks()
@@ -1878,6 +1888,7 @@ class InstallerApp:
 
         def suggest_variations():
             """Use Gemini to generate prompt variations."""
+            GeminiClient, ModelTier = _gemini_client()
             if GeminiClient is None:
                 variations_status_var.set("Gemini client not available")
                 return
