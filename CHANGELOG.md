@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.5.1] - 2026-10-15
+
 ### Fixed
 - The window took about 20 s to open for a 41-tool tree. While it was sized,
   every description re-wrapped itself on each layout change, which changed the
