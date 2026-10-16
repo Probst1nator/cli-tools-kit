@@ -71,7 +71,7 @@ def advertise(metadata: Union[ToolMetadata, List[ToolMetadata]]) -> NoReturn:
         # Optional fields are emitted only when set, so a tool that never
         # touched them produces exactly the pre-0.2.0 record.
         for key in ("capability", "domain", "category", "skill_name", "skill_status",
-                    "claude_plugin", "claude_marketplace"):
+                    "claude_plugin", "claude_marketplace", "mcp_name", "mcp_command"):
             value = getattr(m, key, None)
             if value:
                 record[key] = value

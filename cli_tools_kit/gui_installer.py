@@ -102,6 +102,7 @@ RIGHT_COLS = (
     ("uses", 55),
     ("status", 115),
     ("skill", 65),
+    ("mcp", 55),
     ("icon", 50),
     ("autostart", 85),
 )
@@ -114,6 +115,7 @@ _COLUMN_TEXTS = {
     "status": ("Status", "✓ Installed", "✗ Not installed", "⟳ Needs Update",
                "⟳ Skill update", "⟳ Update + skill"),
     "skill": ("Skill",),
+    "mcp": ("MCP",),
     "icon": ("Icon",),
     "autostart": ("Auto-Start",),
 }
@@ -122,6 +124,7 @@ _DEBUG_CELL_COLORS = {
     "uses": "#00ffff",
     "status": "#0000ff",
     "skill": "#00ff88",
+    "mcp": "#88ff00",
     "icon": "#ffff00",
     "autostart": "#ff00ff",
 }
@@ -270,6 +273,12 @@ class InstallerApp:
         self.autostart_vars: Dict[str, tk.BooleanVar] = {}  # Autostart checkboxes
         self.autostart_gears: Dict[str, ttk.Label] = {}  # ⚙ beside the checkbox, for tools with conditions
         self.skill_vars: Dict[str, tk.BooleanVar] = {}      # Per-row "Skill" checkbox (only for tools with skill_name)
+        self.mcp_vars: Dict[str, tk.BooleanVar] = {}        # Per-row "MCP" checkbox (only for tools with mcp_name)
+        # Each box's state when the row was built: a box that was already
+        # ticked adds no new harness on Apply (_apply_worker).
+        self.skill_was: Dict[str, bool] = {}
+        self.mcp_was: Dict[str, bool] = {}
+        self._harnesses = None   # (skill targets, MCP targets) this host has; see _targets()
         self.status_labels: Dict[str, ttk.Label] = {}
         self.icon_labels: Dict[str, ttk.Label] = {}  # For displaying tool icons
         self.icon_cache: Dict[str, Optional[ImageTk.PhotoImage]] = {}  # Prevent GC
@@ -742,6 +751,10 @@ class InstallerApp:
         self.autostart_vars.clear()
         self.autostart_gears.clear()
         self.skill_vars.clear()
+        self.mcp_vars.clear()
+        self.skill_was.clear()
+        self.mcp_was.clear()
+        self._harnesses = None
         self.status_labels.clear()
         self.icon_labels.clear()
         self.tk_frames.clear()
@@ -960,7 +973,7 @@ class InstallerApp:
         # Fixed-width column headers on the shared table grid
         header_cells = self._build_right_cells(right_headers, theme_bg)
         for col_key, text in (("uses", "Uses"), ("status", "Status"),
-                              ("skill", "Skill"), ("icon", "Icon"),
+                              ("skill", "Skill"), ("mcp", "MCP"), ("icon", "Icon"),
                               ("autostart", "Auto-Start")):
             ttk.Label(header_cells[col_key], text=text, style="Muted.TLabel",
                       anchor="center").pack(expand=True, fill="both")
@@ -2811,14 +2824,17 @@ class InstallerApp:
         # across all rows.
         skill_frame = cells["skill"]
         if tool.skill_name:
-            skill_var = tk.BooleanVar(value=install._skill_installed(tool.skill_name))
+            skill_var = tk.BooleanVar(value=self._skill_present(tool))
             self.skill_vars[key] = skill_var
+            self.skill_was[key] = skill_var.get()
             skill_var.trace_add("write", self._on_checkbox_changed)
             skill_var.trace_add("write", lambda *_a, k=key: self._on_skill_var_changed(k))
             skill_cb = ttk.Checkbutton(skill_frame, variable=skill_var, style="Card.TCheckbutton")
             skill_cb.pack(expand=True)
             # Wire Install → Skill auto-check (only once skill_var exists).
             var.trace_add("write", lambda *_a, k=key: self._on_install_var_changed(k))
+
+        self._build_mcp_cell(cells["mcp"], tool, key, var)
 
         # Icon column
         icon_frame = cells["icon"]
@@ -2963,13 +2979,16 @@ class InstallerApp:
         # skill_name; otherwise the cell stays empty.
         skill_frame = cells["skill"]
         if parent.skill_name:
-            skill_var = tk.BooleanVar(value=install._skill_installed(parent.skill_name))
+            skill_var = tk.BooleanVar(value=self._skill_present(parent))
             self.skill_vars[key] = skill_var
+            self.skill_was[key] = skill_var.get()
             skill_var.trace_add("write", self._on_checkbox_changed)
             skill_var.trace_add("write", lambda *_a, k=key: self._on_skill_var_changed(k))
             skill_cb = ttk.Checkbutton(skill_frame, variable=skill_var, style="Card.TCheckbutton")
             skill_cb.pack(expand=True)
             var.trace_add("write", lambda *_a, k=key: self._on_install_var_changed(k))
+
+        self._build_mcp_cell(cells["mcp"], parent, key, var)
 
         # Icon column
         icon_frame = cells["icon"]
@@ -3446,6 +3465,70 @@ class InstallerApp:
                 self._suppress_skill_sync = False
             self.root.bell()  # audible cue that the toggle was refused
 
+    def _targets(self):
+        """(skill targets, MCP targets) whose harness this host has, read once per build.
+
+        The wrapper's ``run(skill_targets=..., mcp_targets=...)``, else the
+        built-in Claude Code and opencode targets.
+        """
+        if self._harnesses is None:
+            from . import mcp_servers, tui_installer
+            skill = tui_installer.skill_targets()
+            self._harnesses = (tui_installer.present(skill) or skill, mcp_servers.present())
+        return self._harnesses
+
+    def _skill_present(self, tool: discovery.ToolEntry) -> bool:
+        """The Skill box starts ticked when any harness has the skill."""
+        for target in self._targets()[0]:
+            try:
+                if target.installed(tool):
+                    return True
+            except Exception:
+                continue
+        return False
+
+    def _build_mcp_cell(self, frame, tool: discovery.ToolEntry, key: str,
+                        install_var: "tk.BooleanVar") -> None:
+        """The MCP checkbox, for a tool that advertises an MCP server; else empty.
+
+        The box starts ticked when any harness has the server. Unlike Skill,
+        ticking Install does not tick MCP: a registered server starts with
+        every session of its harness. Like Skill, MCP needs Install, and
+        unticking Install unticks MCP. Without a harness on the host the box
+        is greyed out.
+        """
+        if not (tool.mcp_name and tool.mcp_command):
+            return
+        from . import mcp_servers
+        harnesses = self._targets()[1]
+        mcp_var = tk.BooleanVar(value=bool(mcp_servers.registered_with(tool.mcp_name, harnesses)))
+        self.mcp_vars[key] = mcp_var
+        self.mcp_was[key] = mcp_var.get()
+        mcp_var.trace_add("write", self._on_checkbox_changed)
+        mcp_var.trace_add("write", lambda *_a, k=key: self._on_mcp_var_changed(k))
+        box = ttk.Checkbutton(frame, variable=mcp_var, style="Card.TCheckbutton")
+        if not harnesses:
+            box.state(["disabled"])
+        box.pack(expand=True)
+        install_var.trace_add("write", lambda *_a, k=key: self._on_install_var_changed_mcp(k))
+
+    def _on_install_var_changed_mcp(self, key: str) -> None:
+        """Install true → false: set MCP false; nothing happens on the way up."""
+        mcp_var = self.mcp_vars.get(key)
+        install_var = self.check_vars.get(key)
+        if mcp_var is not None and install_var is not None and not install_var.get():
+            mcp_var.set(False)
+
+    def _on_mcp_var_changed(self, key: str) -> None:
+        """Enforce: MCP cannot be checked while Install is unchecked."""
+        mcp_var = self.mcp_vars.get(key)
+        install_var = self.check_vars.get(key)
+        if mcp_var is None or install_var is None:
+            return
+        if mcp_var.get() and not install_var.get():
+            mcp_var.set(False)
+            self.root.bell()  # audible cue that the toggle was refused
+
     def _on_checkbox_changed(self, *_args):
         """Highlight Apply Changes button when any checkbox is toggled."""
         if not self._apply_highlighted:
@@ -3664,16 +3747,21 @@ class InstallerApp:
         check_state = {k: v.get() for k, v in self.check_vars.items()}
         autostart_state = {k: v.get() for k, v in self.autostart_vars.items()}
         skill_state = {k: v.get() for k, v in self.skill_vars.items()}
+        mcp_state = {k: v.get() for k, v in self.mcp_vars.items()}
+        self._targets()   # read the harnesses here, not in the worker
 
         events: queue.Queue = queue.Queue()
         threading.Thread(
             target=self._apply_worker,
             args=(check_state, autostart_state, skill_state, events),
+            kwargs={"mcp_state": mcp_state, "skill_was": dict(self.skill_was),
+                    "mcp_was": dict(self.mcp_was)},
             daemon=True,
         ).start()
         self.root.after(50, lambda: self._drain_op_events(events, self._finish_apply_changes))
 
-    def _apply_worker(self, check_state, autostart_state, skill_state, events):
+    def _apply_worker(self, check_state, autostart_state, skill_state, events, mcp_state=None,
+                      skill_was=None, mcp_was=None):
         """Background-thread body of _apply_changes.
 
         Runs the blocking install/remove/autostart work off the Tk main thread.
@@ -3686,7 +3774,8 @@ class InstallerApp:
 
         installed = removed = updated = errors = 0
         autostart_enabled = autostart_disabled = 0
-        skills_installed = skills_removed = 0
+        counts = {"skills_installed": 0, "skills_removed": 0, "mcp_installed": 0,
+                  "mcp_removed": 0, "errors": 0}
         hint_command = None
         # Installing one Claude Code plugin row disables its namesakes, so their
         # state is read once up front; read in the loop, a namesake still ticked
@@ -3791,11 +3880,16 @@ class InstallerApp:
                     # User checked autostart but tool isn't installed - uncheck it
                     events.put(("uncheck_autostart", key))
 
-            # Handle Claude skill installation. The tool's own --install may
-            # already have written SKILL.md as a side effect (scrape, studon,
-            # …) — that's harmless: --install-skill is idempotent and
-            # --uninstall-skill cleanly reverses it if the user unchecked the
-            # Skill column.
+            # Skills, per harness. The tool's own --install may already have
+            # written SKILL.md as a side effect (scrape, studon, …) — that's
+            # harmless: --install-skill is idempotent and --uninstall-skill
+            # cleanly reverses it if the user unchecked the Skill column.
+            harnesses = getattr(self, "_harnesses", None)
+            if harnesses is None:
+                from . import tui_installer
+                skill = tui_installer.skill_targets()
+                harnesses = (tui_installer.present(skill) or skill, [])
+            skill_targets, mcp_targets = harnesses
             for tool in self.tools:
                 if not tool.skill_name:
                     continue
@@ -3803,54 +3897,85 @@ class InstallerApp:
                 if key not in skill_state:
                     continue
                 want_skill = skill_state[key]
-                have_skill = install._skill_installed(tool.skill_name)
-                skill_stale = (tool.skill_status == "stale")
+                was = (skill_was or {}).get(key, False)
                 tool_installed_now = install.is_installed(tool)
-                # Install when missing, OR refresh in place when the installed
-                # copy is stale (the tool reported skill_status=stale). Both go
-                # through the idempotent --install-skill, which rewrites only if
-                # the content differs.
-                if want_skill and tool_installed_now and (not have_skill or skill_stale):
-                    log(f"{'Updating' if have_skill else 'Installing'} skill: {tool.skill_name}")
-                    success, output = install.install_skill_for_tool(tool)
-                    if success:
-                        skills_installed += 1
-                        log(f"  ✓ skill '{tool.skill_name}' installed", "success")
-                    else:
-                        errors += 1
-                        log(f"  ✗ skill '{tool.skill_name}' failed", "error")
-                    if output:
-                        for line in output.split("\n"):
-                            log(f"    {line}", "success" if success else "error")
-                elif have_skill and not want_skill:
-                    log(f"Removing skill: {tool.skill_name}")
-                    success, output = install.uninstall_skill_for_tool(tool)
-                    if success:
-                        skills_removed += 1
-                        log(f"  ✓ skill '{tool.skill_name}' removed", "success")
-                    else:
-                        errors += 1
-                        log(f"  ✗ skill '{tool.skill_name}' removal failed", "error")
-                    if output:
-                        for line in output.split("\n"):
-                            log(f"    {line}", "success" if success else "error")
+                for target in skill_targets:
+                    InstallerApp._apply_skill_target(target, tool, want_skill, was,
+                                                     tool_installed_now, log, counts)
+
+            # MCP servers, after the tools: a server is registered only for a
+            # tool that is installed now, and removed when its box is unticked.
+            from . import mcp_servers
+            for tool in self.tools:
+                key = f"{tool.category}_{tool.name}"
+                if not (tool.mcp_name and tool.mcp_command) or key not in (mcp_state or {}):
+                    continue
+                want_mcp = mcp_state[key]
+                if want_mcp and not install.is_installed(tool):
+                    continue
+                # A box that was ticked already registers with no new harness.
+                done = mcp_servers.apply(tool.mcp_name, tool.mcp_command, want_mcp, mcp_targets,
+                                         add_missing=not (mcp_was or {}).get(key, False), log=log)
+                counts["mcp_installed"] += done["installed"]
+                counts["mcp_removed"] += done["removed"]
+                counts["errors"] += done["errors"]
 
             install.refresh_desktop_database()
         except Exception as e:
-            errors += 1
+            counts["errors"] += 1
             log(f"  ✗ Unexpected error: {e}", "error")
         finally:
             events.put(("done", {
                 "installed": installed,
                 "updated": updated,
                 "removed": removed,
-                "errors": errors,
+                "errors": errors + counts["errors"],
                 "autostart_enabled": autostart_enabled,
                 "autostart_disabled": autostart_disabled,
-                "skills_installed": skills_installed,
-                "skills_removed": skills_removed,
+                "skills_installed": counts["skills_installed"],
+                "skills_removed": counts["skills_removed"],
+                "mcp_installed": counts["mcp_installed"],
+                "mcp_removed": counts["mcp_removed"],
                 "hint_command": hint_command,
             }))
+
+    @staticmethod
+    def _apply_skill_target(target, tool, want_skill, was, tool_installed_now, log, counts):
+        """Bring one harness in line with a row's Skill box (worker thread).
+
+        Install when the harness lacks the skill and the user ticked the box
+        in this session, or refresh in place when its copy is stale. A box that
+        was already ticked adds no new harness, so an unrelated Apply never
+        spreads a skill. Unticked, every harness that has the skill loses it.
+        """
+        try:
+            have_skill = target.installed(tool)
+            skill_stale = have_skill and target.stale(tool)
+        except Exception as exc:
+            counts["errors"] += 1
+            log(f"  ✗ skill '{tool.skill_name}' ({target.key}): {exc}", "error")
+            return
+        where = "" if target.key == "claude" else f" ({target.label})"
+        if want_skill and tool_installed_now and ((not have_skill and not was) or skill_stale):
+            log(f"{'Updating' if have_skill else 'Installing'} skill: {tool.skill_name}{where}")
+            success, output = target.install(tool)
+            kind, verb = "skills_installed", "installed"
+        elif have_skill and not want_skill:
+            log(f"Removing skill: {tool.skill_name}{where}")
+            success, output = target.uninstall(tool)
+            kind, verb = "skills_removed", "removed"
+        else:
+            return
+        if success:
+            counts[kind] += 1
+            log(f"  ✓ skill '{tool.skill_name}' {verb}", "success")
+        else:
+            counts["errors"] += 1
+            log(f"  ✗ skill '{tool.skill_name}' {'failed' if verb == 'installed' else 'removal failed'}",
+                "error")
+        if output:
+            for line in output.split("\n"):
+                log(f"    {line}", "success" if success else "error")
 
     def _finish_apply_changes(self, result):
         """Main-thread finalize after an _apply_changes worker completes."""
@@ -3871,6 +3996,9 @@ class InstallerApp:
         skill_changes = result.get("skills_installed", 0) + result.get("skills_removed", 0)
         if skill_changes:
             summary += f", {skill_changes} skill changes"
+        mcp_changes = result.get("mcp_installed", 0) + result.get("mcp_removed", 0)
+        if mcp_changes:
+            summary += f", {mcp_changes} MCP changes"
         if errors:
             summary += f", {errors} errors"
         self._log(summary, "warning" if errors else "success")

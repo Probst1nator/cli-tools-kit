@@ -173,3 +173,24 @@ def engine(sandbox_home: Path, fake_tree: Path, monkeypatch: pytest.MonkeyPatch,
     gi.DISCOVERY_ROOTS = []
     gi.DISCOVERER = None
     yield gi
+
+
+@pytest.fixture(autouse=True)
+def no_real_harnesses(tmp_path_factory: pytest.TempPathFactory,
+                      monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Keep the built-in skill and MCP targets off this host's Claude Code and opencode.
+
+    opencode's config dir moves to a temp XDG_CONFIG_HOME and its command is
+    not found; Claude Code's .claude.json is a temp file and `claude` never
+    runs. A test that wants a harness patches it back in.
+    """
+    from cli_tools_kit import mcp_servers
+    xdg = tmp_path_factory.mktemp("xdg")
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
+    monkeypatch.setattr(mcp_servers, "_opencode_exe", lambda: None)
+    monkeypatch.setattr(mcp_servers, "claude_config_file", lambda: xdg / "claude.json")
+
+    def no_claude(args):
+        raise mcp_servers.McpError("tests do not run claude")
+    monkeypatch.setattr(mcp_servers, "_claude", no_claude)
+    return xdg

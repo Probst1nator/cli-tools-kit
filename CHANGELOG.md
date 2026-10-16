@@ -7,6 +7,28 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Added
+- An MCP column. A tool that advertises `mcp_name` and `mcp_command` (the argv
+  that starts its stdio server) gets an MCP checkbox, and the installer
+  registers that command with each agent harness on the host. Built in:
+  Claude Code (`claude mcp add-json` / `remove`, user scope) and opencode
+  (`opencode mcp add`; removing edits its JSONC config and keeps the
+  comments). Wrappers pass others with `run(mcp_targets=[...])`. A box that
+  starts ticked adds no new harness on Apply. `--apply` takes
+  `--mcp-target KEYS`; `--list` and `--uninstall-all` cover the servers.
+  Module `cli_tools_kit.mcp_servers`.
+- Skills for opencode: `tui_installer.opencode_target()`. opencode reads
+  `~/.claude/skills`, so a skill there counts as installed for it; otherwise
+  it gets its own copy under `~/.config/opencode/skills`. `SkillTarget` has a
+  new optional `available` field.
+
+### Changed
+- The window's Skill column now uses the skill targets (`skill_targets`, or
+  the built-in Claude Code and opencode ones) instead of only
+  `~/.claude/skills`, each where the host has the harness. Before, only the
+  text screen used them. A wrapper's own targets, such as AutomatedAlchemy's
+  fauclaude target, now also apply in the window.
+
 ### Fixed
 - `testing.validate_advertise` rejected the documented plugin record: the tag
   `Plugin` was unknown and it asked for an `alias`. It now accepts

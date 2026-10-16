@@ -145,9 +145,13 @@ def cli_uninstall_self():
 
 
 def cli_uninstall_all(tools: List[discovery.ToolEntry]):
+    from . import mcp_servers
     removed = 0
     print(f"\nUninstalling all {len(tools)} tools...")
+    harnesses = mcp_servers.present()
     for tool in tools:
+        if tool.mcp_name:
+            mcp_servers.apply(tool.mcp_name, tool.mcp_command, False, harnesses)
         if install.is_installed(tool):
             success, output = install.remove_tool(tool)
             if success:
@@ -490,6 +494,10 @@ def main():
     parser.add_argument("--skill-target", metavar="KEYS", default="claude",
                         help="With --apply: comma-separated skill target keys "
                              "(default 'claude'; 'none' installs no skills).")
+    parser.add_argument("--mcp-target", metavar="KEYS", default="",
+                        help="With --apply: comma-separated harness keys ('claude', "
+                             "'opencode') to register the tools' MCP servers with "
+                             "(default: none).")
     screen = parser.add_mutually_exclusive_group()
     screen.add_argument("--tui", action="store_true",
                         help="Open the text screen (curses) instead of the tkinter window. "
@@ -541,9 +549,13 @@ def main():
     if args.apply:
         from . import tui_installer
         sys.exit(tui_installer.apply_headless(tools, ",".join(args.apply), args.skill_target,
-                                              targets=state.SKILL_TARGETS))
+                                              targets=state.SKILL_TARGETS,
+                                              mcp_keys=args.mcp_target,
+                                              mcp_targets=state.MCP_TARGETS))
 
     if args.list:
+        from . import mcp_servers
+        harnesses = mcp_servers.present()
         print(f"\nDiscovered {len(tools)} tools:\n" + "="*60)
         for t in tools:
             installed = install.is_installed(t)
@@ -562,14 +574,21 @@ def main():
             if stale and "Icon" not in t.tags:
                 old_alias = install._find_alias_for_script(t.script_path)
                 alias_info = f" ({old_alias}→{t.alias})"
-            print(f" [{status}] {tags_str:<12} {t.category:<12} | {t.name:<25}{alias_info}")
+            mcp_info = ""
+            if t.mcp_name:
+                have = mcp_servers.registered_with(t.mcp_name, harnesses)
+                mcp_info = (f"  MCP {t.mcp_name}: " + ", ".join(h.label for h in have)
+                            if have else "")
+            print(f" [{status}] {tags_str:<12} {t.category:<12} | {t.name:<25}{alias_info}"
+                  f"{mcp_info}")
         return
 
     from . import gui_installer, tui_installer
     if tui_installer.prefer_tui(force_tui=args.tui, force_gui=args.gui,
                                 have_tk=gui_installer._HAVE_TK):
         sys.exit(tui_installer.run_tui(tools, targets=state.SKILL_TARGETS,
-                                       preselect=state.TUI_PRESELECT, title=state.WINDOW_TITLE))
+                                       preselect=state.TUI_PRESELECT, title=state.WINDOW_TITLE,
+                                       mcp_targets=state.MCP_TARGETS))
     if not gui_installer._HAVE_TK:
         if host.IS_WINDOWS:
             sys.exit("tkinter is not available in this Python; use --tui for "
@@ -590,7 +609,7 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         pre_discovery: Optional[Callable] = None,
         check_reconcile_shortcuts: Optional[bool] = None,
         skill_targets: Optional[List] = None, tui_preselect: Optional[bool] = None,
-        plugin_targets: Optional[List] = None,
+        plugin_targets: Optional[List] = None, mcp_targets: Optional[List] = None,
         autostart_check_desktop_name: Optional[str] = None,
         check_log_name: Optional[str] = None, check_state_name: Optional[str] = None,
         self_desktop_file: Optional[str] = None, self_desktop_name: Optional[str] = None,
@@ -621,6 +640,11 @@ def run(*, identity: Optional[InstallerIdentity] = None,
     ``plugin_targets`` lists the Claude Code config directories a plugin tool
     can go into (``plugins.PluginTarget``); each plugin is then offered once
     per target. Without it a plugin goes into ``~/.claude``.
+
+    ``skill_targets`` and ``mcp_targets`` list the agent harnesses a tool's
+    skill and MCP server can go to (``tui_installer.SkillTarget``,
+    ``mcp_servers.McpTarget``). Without them the kit uses its built-in Claude
+    Code and opencode targets, each where the host has that harness.
 
     ``prune`` adds directory names the default wider walk never enters, on top
     of ``DISCOVERY_PRUNE``. It does nothing when a wrapper passes its own
@@ -668,6 +692,8 @@ def run(*, identity: Optional[InstallerIdentity] = None,
         state.TUI_PRESELECT = tui_preselect
     if plugin_targets is not None:
         state.PLUGIN_TARGETS = list(plugin_targets)
+    if mcp_targets is not None:
+        state.MCP_TARGETS = list(mcp_targets)
     if autostart_check_desktop_name is not None:
         state.AUTOSTART_CHECK_DESKTOP_NAME = autostart_check_desktop_name
     if check_log_name is not None:

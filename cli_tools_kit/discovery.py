@@ -7,7 +7,7 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, NamedTuple, Optional
+from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from . import host
 from . import plugins
@@ -38,6 +38,8 @@ class ToolEntry(NamedTuple):
     claude_plugin: str = ""        # Claude Code plugin id ("name@marketplace"); the row installs that plugin instead of a shortcut or alias. See cli_tools_kit.plugins.
     claude_marketplace: str = ""   # Where the plugin's marketplace comes from (owner/repo, URL or path)
     claude_config_dir: str = ""    # Which Claude Code config dir the row targets ("" = ~/.claude); set by discovery from PLUGIN_TARGETS, not advertised
+    mcp_name: str = ""             # If non-empty, the tool brings a stdio MCP server of that name; see cli_tools_kit.mcp_servers
+    mcp_command: Tuple[str, ...] = ()  # The argv that starts that server (absolute paths); the installer registers it with each harness
 
 
 def _group_label(entry: "ToolEntry") -> str:
@@ -115,6 +117,12 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
                 if not has_icon and not alias and not claude_plugin:
                     # Default alias from desktop_file stem
                     alias = item.get("desktop_file", "").replace(".desktop", "")
+                # A server needs both its name and the command that starts it.
+                mcp_command = item.get("mcp_command")
+                mcp_command = (tuple(mcp_command) if isinstance(mcp_command, list) and mcp_command
+                               and all(isinstance(a, str) and a for a in mcp_command) else ())
+                mcp_name = str(item.get("mcp_name", "") or "") if mcp_command else ""
+                mcp_command = mcp_command if mcp_name else ()
 
                 entries.append(ToolEntry(
                     name=item.get("name", "Unknown"),
@@ -143,6 +151,8 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
                     ],
                     claude_plugin=claude_plugin,
                     claude_marketplace=str(item.get("claude_marketplace", "") or ""),
+                    mcp_name=mcp_name,
+                    mcp_command=mcp_command,
                 ))
     except (subprocess.TimeoutExpired, json.JSONDecodeError, Exception):
         # If a tool fails to advertise, it is ignored.

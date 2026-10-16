@@ -88,6 +88,11 @@ class ToolMetadata:
     # The tool's --install/--remove call cli_tools_kit.plugins.main.
     claude_plugin: Optional[str] = None
     claude_marketplace: Optional[str] = None
+    # A stdio MCP server the tool brings along (PROTOCOL.md § Optional
+    # mcp_name): its name and the argv that starts it, with absolute paths.
+    # The installer registers it with each agent harness (cli_tools_kit.mcp_servers).
+    mcp_name: Optional[str] = None
+    mcp_command: Optional[List[str]] = None
 
 
 class ToolInstaller:

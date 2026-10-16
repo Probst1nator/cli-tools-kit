@@ -101,10 +101,15 @@ CHECK_RECONCILE_SHORTCUTS = True
 
 # The curses screen (tui_installer) that main() opens instead of tkinter on a
 # host without a display. SKILL_TARGETS lists where a skill can be registered
-# (None = the default ~/.claude/skills target only); TUI_PRESELECT controls
-# the initial ticks (None = tick everything on a host with nothing installed
-# yet, else mirror the host; True/False force one or the other).
+# (tui_installer.SkillTarget; None = the built-in Claude Code and opencode
+# targets); TUI_PRESELECT controls the initial ticks (None = tick everything on
+# a host with nothing installed yet, else mirror the host; True/False force one
+# or the other).
 SKILL_TARGETS: Optional[List] = None
+
+# MCP_TARGETS lists the agent harnesses a tool's MCP server can be registered
+# with (mcp_servers.McpTarget). None = the built-in Claude Code and opencode.
+MCP_TARGETS: Optional[List] = None
 
 # PLUGIN_TARGETS lists the Claude Code config directories a plugin tool can be
 # installed into (plugins.PluginTarget). None = the default ~/.claude only;

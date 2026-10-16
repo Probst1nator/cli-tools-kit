@@ -237,7 +237,8 @@ Keyword-only; every argument defaults to `None`, meaning "leave the default".
 | `group_by` | `"capability"` | Which field bands the GUI rows: `"capability"` (the advertised word) or `"category"` (whatever your discoverer assigned). Anything else raises `ValueError`. |
 | `pre_discovery` | `None` | `callable(refresh: bool)` run once before scanning, for side effects like cloning repos into a cache. Skipped on the `--check` path so a login hook never touches the network. |
 | `check_reconcile_shortcuts` | `True` | Whether `--check` also reinstalls drifted shortcuts and removes orphaned ones (their tool's `main.py` is gone). Set `False` when your tools' `--install` has side effects unsafe for a login hook, making `--check` skill-only. |
-| `skill_targets` | `[claude_target()]` | Where the text screen can register a skill — see "The text screen" below. |
+| `skill_targets` | `[claude_target(), opencode_target()]` | Where a skill can be registered (`tui_installer.SkillTarget`). The window uses each target the host has; the text screen lets the user pick — see "The text screen" below. |
+| `mcp_targets` | `[claude_code_target(), opencode_target()]` | The agent harnesses a tool's MCP server can be registered with (`mcp_servers.McpTarget`), used the same way. See PROTOCOL.md § Optional `mcp_name`. |
 | `tui_preselect` | `None` | Initial ticks on the text screen: `None` ticks everything on a host with nothing installed yet and otherwise mirrors the host; `True`/`False` force one or the other. |
 | `window_title` | identity's title | GUI window title. |
 | `self_desktop_file`, `self_desktop_name`, `self_desktop_icon` | identity's | The manager's own shortcut. |
@@ -289,14 +290,16 @@ any of this, so the login check stays network-free.
 Without a display (`DISPLAY`/`WAYLAND_DISPLAY` unset: SSH, WSL, a server) or
 without `python3-tk`, `run()` opens a curses screen instead of the tkinter
 window; `--tui` and `--gui` force either. Same rows, same Apply: `Space` ticks
-Install, `s` ticks Skill, `a`/`n` tick all or none, `Enter` applies, `u`
-upgrades when an upgrade is offered, `q` quits.
+Install, `s` ticks Skill, `m` ticks MCP, `a`/`n` tick all or none, `Enter`
+applies, `u` upgrades when an upgrade is offered, `q` quits.
 On a host where none of the tools is installed yet every row starts ticked.
 
-A skill can go to more than one place. The default target writes
-`~/.claude/skills/<name>/` through the tool's `--install-skill`; a wrapper adds
-others with `skill_targets`, and the screen lets the user tick which ones
-Apply writes to (keys `1`..`9`):
+A skill can go to more than one place. The built-in targets are Claude Code
+(`~/.claude/skills/<name>/`, through the tool's `--install-skill`) and opencode;
+a wrapper replaces the list with `skill_targets`. MCP servers have their own
+target line (`mcp_targets`). The screen lists the targets the host has, ticks
+the first of each kind, and lets the user tick which ones Apply writes to
+(keys `1`..`9`, skill targets first):
 
 ```python
 from cli_tools_kit.tui_installer import SkillTarget, claude_target
@@ -319,6 +322,9 @@ when it sets a machine up from a pasted prompt:
 ```bash
 ./installer.py --apply xrdlab,cifsearch --skill-target claude,fauclaude
 ```
+
+`--mcp-target KEYS` (`claude`, `opencode`) also registers the named tools' MCP
+servers; without it `--apply` registers none.
 
 The screen calls the engine's `install_tool` / `remove_tool` / skill functions
 by name at run time, so a wrapper that replaced them (to run each tool in its

@@ -46,6 +46,8 @@ FIELDS = {
     "autostart_conditions": (list, False),
     "claude_plugin": (str, False),
     "claude_marketplace": (str, False),
+    "mcp_name": (str, False),
+    "mcp_command": (list, False),
 }
 TAGS = {"GUI", "CLI", "Icon", "Plugin"}
 SKILL_STATUSES = {"absent", "current", "stale"}
@@ -88,6 +90,11 @@ def validate_advertise(data) -> List[str]:
                 errors.append(f"{where}: 'alias' is required when 'Icon' is not in tags")
         if entry.get("claude_plugin") and not entry.get("claude_marketplace"):
             errors.append(f"{where}: 'claude_marketplace' is required with 'claude_plugin'")
+        if bool(entry.get("mcp_name")) != bool(entry.get("mcp_command")):
+            errors.append(f"{where}: 'mcp_name' and 'mcp_command' go together")
+        command = entry.get("mcp_command")
+        if isinstance(command, list) and "" in command:
+            errors.append(f"{where}: mcp_command has an empty argument")
         status = entry.get("skill_status")
         if isinstance(status, str) and status and status not in SKILL_STATUSES:
             errors.append(f"{where}: skill_status must be one of {sorted(SKILL_STATUSES)}")

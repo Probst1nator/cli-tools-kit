@@ -39,7 +39,7 @@ Each dict in the list describes one installable variant of the tool.
 | `tags` | list[str] | no | `["GUI", "Icon"]` | Capability tags — see below. |
 | `alias` | str | conditional | (derived from `desktop_file`) | Bash alias name. Required when `Icon` is not in tags. |
 | `categories` | str | no | `"Utility;"` | `.desktop` Categories field. |
-| `skill_name` | str | no | — | Opt into Claude Code skill registration — see "Optional `skill_name`" below. |
+| `skill_name` | str | no | — | Opt into skill registration for agent harnesses (Claude Code, opencode) — see "Optional `skill_name`" below. |
 | `skill_status` | str | no | — | When the tool registers a skill, it MAY report the installed copy's freshness so the parent can suggest an update. One of `"absent"`, `"current"`, `"stale"` — see "Reporting skill freshness" below. |
 | `alias_args` | list[str] | no | (= `args`) | Args used in the bash alias only, when they should differ from `args` (e.g. an alias that auto-injects `--clip`). |
 | `capability` | str | no | — | One controlled word naming what the tool does (`scrape`, `tts`, `agent`, …). Parents that group rows use this as the group key — see "Taxonomy" below. |
@@ -51,6 +51,8 @@ Each dict in the list describes one installable variant of the tool.
 | `autostart_conditions` | list[str] | no | `[]` | Condition kinds this tool's autostart supports: `"time_window"`, `"network"`. Declares only the kinds — the values are the user's and live in the installer's config. See "Conditional autostart" below. |
 | `claude_plugin` | str | no | — | A Claude Code plugin id, `name@marketplace`. The row installs that plugin instead of a shortcut or alias. See "Claude Code plugins" below. |
 | `claude_marketplace` | str | with `claude_plugin` | — | Where the plugin's marketplace comes from: a GitHub `owner/repo`, a git or https URL, or a local directory. |
+| `mcp_name` | str | no | — | The name of a stdio MCP server the tool brings along. See "Optional `mcp_name`" below. |
+| `mcp_command` | list[str] | with `mcp_name` | — | The argv that starts that server, with absolute paths (e.g. the venv's python and the server script). |
 
 All of these are fields of `ToolMetadata`, and `advertise()` emits each optional
 one only when it is set. A record that never touched them is byte-identical to
@@ -288,13 +290,25 @@ Each managed line gets a trailing `# cli-tool-kit:<marker>` comment so that:
 - Multiple tools (each with their own marker) coexist in one user's crontab
   without colliding.
 
-## Optional `skill_name` — Claude Code skill registration
+## Optional `skill_name` — skill registration
 
-If a tool can register a Claude Code skill (a `~/.claude/skills/<name>/SKILL.md`),
-add `"skill_name": "<name>"` to its advertise dict. Compliant parent installer
+If a tool can register a skill (a `~/.claude/skills/<name>/SKILL.md`), add
+`"skill_name": "<name>"` to its advertise dict. Compliant parent installer
 GUIs then show a per-row **Skill** checkbox; checking it runs the tool's
 `--install-skill`, unchecking runs `--uninstall-skill`. The Install checkbox
 auto-checks Skill when toggled on.
+
+The file format is the Agent Skills one that several harnesses read, so the
+parent makes the skill reach each harness on the host (a skill target each).
+The tool's side stays the same. cli-tools-kit has two targets built in:
+
+- **Claude Code**: `~/.claude/skills/<name>/`, written by `--install-skill`.
+- **opencode**: opencode also reads `~/.claude/skills` and `~/.agents/skills`,
+  so a skill there counts as installed for it and nothing is copied. Only
+  when neither has the skill, or `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` is set,
+  does the parent copy what `--install-skill` writes into
+  `~/.config/opencode/skills/<name>/` (and removes the `~/.claude/skills` copy
+  again if it was not there before).
 
 Contract the tool must satisfy:
 
@@ -345,6 +359,34 @@ When a tool reports `"stale"`, a compliant parent flags the row (e.g.
 `--install-skill` on apply to refresh the skill in place. Tools that omit
 `skill_status` keep the old behaviour — the installer only distinguishes
 installed-vs-absent.
+
+## Optional `mcp_name` — MCP servers
+
+A tool that comes with a stdio MCP server advertises its name and the argv
+that starts it:
+
+```python
+ToolMetadata(..., mcp_name="embedding-space",
+             mcp_command=[str(VENV_PYTHON), str(HERE / "mcp_server" / "server.py")])
+```
+
+Compliant parents show a per-row **MCP** checkbox and register that command
+under that name with each agent harness on the host. The tool needs no MCP
+code and no install flags. Use absolute paths: a harness starts the server
+from any directory. cli-tools-kit has two harnesses built in:
+
+| Harness | Where | How |
+|---|---|---|
+| Claude Code | `mcpServers` in `~/.claude.json` (user scope) | `claude mcp add-json` / `claude mcp remove`, `-s user` |
+| opencode | `mcp` in `~/.config/opencode/opencode.json` (or `.jsonc`) | `opencode mcp add`; removing edits the file, keeping its comments |
+
+The parent never runs `claude mcp list` or `get`, which start every
+registered server. Ticking Install does not tick MCP, since a registered server
+starts with every session of its harness. A box that starts ticked (the server
+is registered with at least one harness) adds no new harness on Apply; only a
+box the user ticks does. A name registered with another command, such as an
+old checkout path, is replaced on the next Apply. Unticking removes the server
+from every harness on the host.
 
 ## Claude Code plugins (`claude_plugin`)
 

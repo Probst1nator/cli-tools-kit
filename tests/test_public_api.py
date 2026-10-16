@@ -58,6 +58,7 @@ def test_installer_side() -> None:
         "skill_targets", "tui_preselect", "autostart_check_desktop_name",
         "check_log_name", "check_state_name", "self_desktop_file", "self_desktop_name",
         "self_desktop_icon", "wm_class", "notify_app", "hooks", "upgrade_repos",
+        "mcp_targets",
     }
     assert set(gui_installer.InstallHooks._fields) == {
         "install_tool", "remove_tool", "install_skill", "uninstall_skill"}
@@ -73,6 +74,11 @@ def test_installer_side() -> None:
     assert _params(tui_installer.SkillTarget) >= {
         "key", "label", "installed", "install", "uninstall"}
     assert callable(tui_installer.claude_target)
+    assert callable(tui_installer.opencode_target)
+    from cli_tools_kit import mcp_servers
+    assert _params(mcp_servers.McpTarget) >= {
+        "key", "label", "available", "registered", "install", "uninstall"}
+    assert callable(mcp_servers.claude_code_target) and callable(mcp_servers.opencode_target)
 
 
 def test_testing_helper() -> None:
@@ -89,7 +95,7 @@ def test_grouping_side() -> None:
 
 
 @pytest.mark.parametrize("flag", [
-    "--list", "--apply", "--skill-target", "--refresh", "--update-all", "--upgrade", "--install",
+    "--list", "--apply", "--skill-target", "--mcp-target", "--refresh", "--update-all", "--upgrade", "--install",
     "--uninstall", "--cleanup", "--check", "--tui", "--gui",
     "--enable-autostart-check", "--disable-autostart-check",
 ])
