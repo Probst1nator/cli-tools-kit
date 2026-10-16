@@ -356,7 +356,7 @@ import json, sys
 
 if "--advertise" in sys.argv:          # stdlib only, before anything else
     print(json.dumps([{
-        "name": "clawd", "desktop_file": "clawd.desktop", "icon": "",
+        "name": "clawd", "desktop_file": "clawd.desktop", "icon": "applications-games",
         "desc": "Clawd runs around above the prompt.", "tags": ["Plugin"],
         "capability": "claude-mod",
         "claude_plugin": "clawd@clawd", "claude_marketplace": "Probst1nator/clawd",

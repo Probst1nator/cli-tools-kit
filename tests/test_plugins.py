@@ -231,6 +231,18 @@ def test_advertise_and_discovery_carry_the_plugin(tmp_path):
     assert entry.claude_marketplace == "AutomatedAlchemy/clawd-matsci"
 
 
+def test_the_validator_accepts_the_documented_plugin_record():
+    from cli_tools_kit.testing import validate_advertise
+    record = {"name": "clawd", "desktop_file": "clawd.desktop", "icon": "applications-games",
+              "desc": "Clawd runs around above the prompt.", "tags": ["Plugin"],
+              "capability": "claude-mod",
+              "claude_plugin": "clawd@clawd", "claude_marketplace": "Probst1nator/clawd"}
+    assert validate_advertise([record]) == []
+    del record["claude_marketplace"]
+    assert validate_advertise([record]) == [
+        "entry 0 (clawd): 'claude_marketplace' is required with 'claude_plugin'"]
+
+
 def test_gui_apply_lets_the_newly_ticked_plugin_win(fake_claude, monkeypatch):
     """Both rows ticked, one installed: the other installs and stays the one enabled."""
     pytest.importorskip("tkinter")

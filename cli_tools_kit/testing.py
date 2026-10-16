@@ -44,8 +44,10 @@ FIELDS = {
     "cron_schedule": (str, False),
     "cron_args": (list, False),
     "autostart_conditions": (list, False),
+    "claude_plugin": (str, False),
+    "claude_marketplace": (str, False),
 }
-TAGS = {"GUI", "CLI", "Icon"}
+TAGS = {"GUI", "CLI", "Icon", "Plugin"}
 SKILL_STATUSES = {"absent", "current", "stale"}
 AUTOSTART_CONDITIONS = {"time_window", "network"}
 PROBE_TIMEOUT = 5.0   # what the parent installer allows
@@ -82,8 +84,10 @@ def validate_advertise(data) -> List[str]:
             unknown = sorted(set(tags) - TAGS)
             if unknown:
                 errors.append(f"{where}: unknown tags {unknown}; allowed {sorted(TAGS)}")
-            if "Icon" not in tags and not entry.get("alias"):
+            if "Icon" not in tags and not entry.get("alias") and not entry.get("claude_plugin"):
                 errors.append(f"{where}: 'alias' is required when 'Icon' is not in tags")
+        if entry.get("claude_plugin") and not entry.get("claude_marketplace"):
+            errors.append(f"{where}: 'claude_marketplace' is required with 'claude_plugin'")
         status = entry.get("skill_status")
         if isinstance(status, str) and status and status not in SKILL_STATUSES:
             errors.append(f"{where}: skill_status must be one of {sorted(SKILL_STATUSES)}")

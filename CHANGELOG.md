@@ -7,6 +7,12 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Fixed
+- `testing.validate_advertise` rejected the documented plugin record: the tag
+  `Plugin` was unknown and it asked for an `alias`. It now accepts
+  `claude_plugin` and `claude_marketplace`, and reports a plugin without its
+  marketplace.
+
 ## [1.5.1] - 2026-10-15
 
 ### Fixed
