@@ -377,3 +377,12 @@ def test_window_builds_the_mcp_cell_and_apply_leaves_an_uninstalled_row_alone(
         assert have == {"esc": ARGV}
     finally:
         root.destroy()
+
+
+def test_the_window_uses_the_built_in_skill_targets_only(monkeypatch) -> None:
+    from cli_tools_kit import state
+    own = tui.SkillTarget("fauclaude", "fauclaude", installed=lambda t: False,
+                          install=lambda t: (True, ""), uninstall=lambda t: (True, ""))
+    monkeypatch.setattr(state, "SKILL_TARGETS", [tui.claude_target(), own])
+    skill, _ = gi.InstallerApp._targets(SimpleNamespace(_harnesses=None))
+    assert [t.key for t in skill] == ["claude"]     # opencode is not on this test host

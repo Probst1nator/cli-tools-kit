@@ -3478,12 +3478,14 @@ class InstallerApp:
     def _targets(self):
         """(skill targets, MCP targets) whose harness this host has, read once per build.
 
-        The wrapper's ``run(skill_targets=..., mcp_targets=...)``, else the
-        built-in Claude Code and opencode targets.
+        Skills use the built-in Claude Code and opencode targets: a wrapper's
+        ``run(skill_targets=...)`` applies on the text screen only (user
+        decision, 2026-10-16). MCP servers use the wrapper's
+        ``run(mcp_targets=...)``, else the built-in ones.
         """
         if self._harnesses is None:
             from . import mcp_servers, tui_installer
-            skill = tui_installer.skill_targets()
+            skill = tui_installer.default_targets()
             self._harnesses = (tui_installer.present(skill) or skill, mcp_servers.present())
         return self._harnesses
 
@@ -3897,7 +3899,7 @@ class InstallerApp:
             harnesses = getattr(self, "_harnesses", None)
             if harnesses is None:
                 from . import tui_installer
-                skill = tui_installer.skill_targets()
+                skill = tui_installer.default_targets()
                 harnesses = (tui_installer.present(skill) or skill, [])
             skill_targets, mcp_targets = harnesses
             for tool in self.tools:

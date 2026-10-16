@@ -29,11 +29,10 @@ Stability for what counts as the public surface.
   new optional `available` field.
 
 ### Changed
-- The window's Skill column now uses the skill targets (`skill_targets`, or
-  the built-in Claude Code and opencode ones) instead of only
-  `~/.claude/skills`, each where the host has the harness. Before, only the
-  text screen used them. A wrapper's own targets, such as AutomatedAlchemy's
-  fauclaude target, now also apply in the window.
+- The window's Skill column now uses the built-in Claude Code and opencode
+  targets instead of only `~/.claude/skills`, each where the host has the
+  harness. A wrapper's own `skill_targets` (such as AutomatedAlchemy's
+  fauclaude target) still apply on the text screen only.
 
 ### Fixed
 - `testing.validate_advertise` rejected the documented plugin record: the tag

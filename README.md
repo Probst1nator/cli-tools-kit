@@ -237,8 +237,8 @@ Keyword-only; every argument defaults to `None`, meaning "leave the default".
 | `group_by` | `"capability"` | Which field bands the GUI rows: `"capability"` (the advertised word) or `"category"` (whatever your discoverer assigned). Anything else raises `ValueError`. |
 | `pre_discovery` | `None` | `callable(refresh: bool)` run once before scanning, for side effects like cloning repos into a cache. Skipped on the `--check` path so a login hook never touches the network. |
 | `check_reconcile_shortcuts` | `True` | Whether `--check` also reinstalls drifted shortcuts and removes orphaned ones (their tool's `main.py` is gone). Set `False` when your tools' `--install` has side effects unsafe for a login hook, making `--check` skill-only. |
-| `skill_targets` | `[claude_target(), opencode_target()]` | Where a skill can be registered (`tui_installer.SkillTarget`). The window uses each target the host has; the text screen lets the user pick — see "The text screen" below. |
-| `mcp_targets` | `[claude_code_target(), opencode_target()]` | The agent harnesses a tool's MCP server can be registered with (`mcp_servers.McpTarget`), used the same way. See PROTOCOL.md § Optional `mcp_name`. |
+| `skill_targets` | `[claude_target(), opencode_target()]` | Where the text screen can register a skill (`tui_installer.SkillTarget`); the user picks — see "The text screen" below. The window always uses the built-in Claude Code and opencode targets, each where the host has it. |
+| `mcp_targets` | `[claude_code_target(), opencode_target()]` | The agent harnesses a tool's MCP server can be registered with (`mcp_servers.McpTarget`), in the window and on the text screen. See PROTOCOL.md § Optional `mcp_name`. |
 | `tui_preselect` | `None` | Initial ticks on the text screen: `None` ticks everything on a host with nothing installed yet and otherwise mirrors the host; `True`/`False` force one or the other. |
 | `window_title` | identity's title | GUI window title. |
 | `self_desktop_file`, `self_desktop_name`, `self_desktop_icon` | identity's | The manager's own shortcut. |
