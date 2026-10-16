@@ -339,3 +339,41 @@ def test_gui_apply_writes_a_skill_to_each_harness_only_from_a_box_ticked_now(mon
     assert have == {"a": {"s"}, "b": {"s"}}
     run(False, True)
     assert have == {"a": set(), "b": set()}
+
+
+def test_window_builds_the_mcp_cell_and_apply_leaves_an_uninstalled_row_alone(
+        sandbox_home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The real window: an MCP row registered elsewhere while its tool is not installed."""
+    tkinter = pytest.importorskip("tkinter")
+    try:
+        root = tkinter.Tk()
+    except tkinter.TclError as exc:
+        pytest.skip(f"no display: {exc}")
+    errors: list = []
+    root.report_callback_exception = lambda *exc: errors.append(exc)
+    from cli_tools_kit import state
+    have: Dict[str, List[str]] = {"esc": ARGV}
+    monkeypatch.setattr(state, "MCP_TARGETS", [_fake_target(have)])
+    script = tmp_path / "esc" / "main.py"
+    script.parent.mkdir()
+    script.write_text("", encoding="utf-8")
+    tool = _tool()._replace(script_path=str(script), category="Smoke")
+    plain = _tool(name="plain", mcp="", argv=())._replace(script_path=str(script),
+                                                          category="Smoke")
+    try:
+        app = gi.InstallerApp(root, [tool, plain])
+        root.update()
+        key = f"{tool.category}_{tool.name}"
+        assert errors == []
+        assert ("mcp", 55) in gi.RIGHT_COLS
+        assert set(app.mcp_vars) == {key}
+        assert app.mcp_vars[key].get() and app.mcp_was[key]
+        assert not app.check_vars[key].get()          # Install unticked, MCP still ticked
+        check = {k: v.get() for k, v in app.check_vars.items()}
+        check["Smoke_plain"] = True                   # an Apply for another row
+        monkeypatch.setattr(gi, "install_tool", lambda t, skip_deps=False: (True, ""))
+        gi.InstallerApp._apply_worker(app, check, {}, {}, queue.Queue(),
+                                      mcp_state={key: True}, mcp_was=dict(app.mcp_was))
+        assert have == {"esc": ARGV}
+    finally:
+        root.destroy()
