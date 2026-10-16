@@ -14,6 +14,7 @@ from . import autostart
 from . import discovery
 from . import host
 from . import install
+from . import startup_timing
 from . import state
 from . import sweep
 from .identity import InstallerIdentity
@@ -466,6 +467,7 @@ def cli_check() -> int:
 
 
 def main():
+    startup_timing.to_main()
     host.harden_stdio()
     parser = argparse.ArgumentParser(description="Tools Manager")
     parser.add_argument("--install", action="store_true", help="Install manager shortcut")
@@ -498,6 +500,12 @@ def main():
                         help="With --apply: comma-separated harness keys ('claude', "
                              "'opencode') to register the tools' MCP servers with "
                              "(default: none).")
+    parser.add_argument("--startup-time", metavar="RUNS", type=int, nargs="?", const=1,
+                        default=0,
+                        help="Start the window RUNS times (default 1), each as a new process "
+                             "that exits once the window is drawn, and print how long each "
+                             "startup phase took. The steps after the first frame "
+                             "(auto-update, upgrade check) do not run.")
     screen = parser.add_mutually_exclusive_group()
     screen.add_argument("--tui", action="store_true",
                         help="Open the text screen (curses) instead of the tkinter window. "
@@ -505,6 +513,11 @@ def main():
     screen.add_argument("--gui", action="store_true",
                         help="Insist on the tkinter window.")
     args = parser.parse_args()
+
+    # The measured runs are new processes with the same arguments; they tell
+    # themselves apart from this one by startup_timing.ACTIVE.
+    if args.startup_time and not startup_timing.ACTIVE:
+        sys.exit(startup_timing.benchmark(args.startup_time))
 
     if args.refresh:
         state.REFRESH_REPOS = True
@@ -534,7 +547,9 @@ def main():
     if args.cleanup:
         sys.exit(1 if cli_cleanup(dry_run=not args.yes) else 0)
 
-    tools = discovery.discover_tools()
+    with startup_timing.phase("discovery"):
+        tools = discovery.discover_tools()
+    startup_timing.info(tools=len(tools), title=state.WINDOW_TITLE)
 
     if args.uninstall_all:
         cli_uninstall_all(tools)
@@ -586,6 +601,7 @@ def main():
     from . import gui_installer, tui_installer
     if tui_installer.prefer_tui(force_tui=args.tui, force_gui=args.gui,
                                 have_tk=gui_installer._HAVE_TK):
+        startup_timing.stop("the text screen would open; --startup-time measures the window.")
         sys.exit(tui_installer.run_tui(tools, targets=state.SKILL_TARGETS,
                                        preselect=state.TUI_PRESELECT, title=state.WINDOW_TITLE,
                                        mcp_targets=state.MCP_TARGETS))
@@ -596,8 +612,12 @@ def main():
         sys.exit("tkinter is not installed (Debian/Ubuntu: apt install python3-tk); "
                  "use --tui for the text screen.")
 
-    root = gui_installer.tk.Tk(className=state.WM_CLASS)
-    gui_installer.InstallerApp(root, tools)
+    with startup_timing.phase("Tk()"):
+        root = gui_installer.tk.Tk(className=state.WM_CLASS)
+    with startup_timing.phase("window"):
+        gui_installer.InstallerApp(root, tools)
+    if startup_timing.ACTIVE:
+        startup_timing.stop_after_first_draw(root)
     root.mainloop()
 
 

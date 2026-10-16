@@ -66,3 +66,28 @@ def test_window_builds_with_every_row_kind(sandbox_home: Path, tmp_path: Path, t
 
     assert tk_root.errors == []
     assert len(app.tools_by_key) == len(tools)
+
+
+def test_a_measured_start_runs_none_of_the_deferred_steps(sandbox_home: Path, tmp_path: Path,
+                                                          tk_root, monkeypatch) -> None:
+    """A --startup-time run ends at the first frame. The orphan warning, the
+    startup auto-update and the upgrade check come due inside that frame's
+    update(), so the window must not schedule them at all."""
+    from cli_tools_kit import startup_timing
+    monkeypatch.setattr(startup_timing, "ACTIVE", True)
+    monkeypatch.setattr(startup_timing, "_phases", [])
+    monkeypatch.setattr(startup_timing, "_totals", {})
+    called: list = []
+    for name in ("_show_orphan_warning", "_maybe_auto_update_on_startup", "_start_upgrade_check"):
+        monkeypatch.setattr(gi.InstallerApp, name, lambda self, name=name: called.append(name))
+    script = tmp_path / "plain" / "main.py"
+    script.parent.mkdir()
+    script.write_text("", encoding="utf-8")
+
+    gi.InstallerApp(tk_root, [_entry(script, "Plain", tags=["CLI"], alias="plain")])
+    tk_root.after(400, tk_root.quit)   # past the 100, 200 and 300 ms the steps wait for
+    tk_root.mainloop()
+
+    assert called == []
+    phases = [p["label"] for p in startup_timing._phases if not p.get("total")]
+    assert phases == ["usage counts", "orphan sweep", "rows and widgets", "size and layout"]

@@ -258,6 +258,39 @@ subcommands should skip `run()` and call the primitives (`discover_tools`,
 `install_tool`, `remove_tool`, `cli_check`) after applying an identity with
 `_apply_identity`.
 
+### Startup time
+
+`--startup-time [RUNS]` shows what the window's start spends its time on. The
+installer starts itself RUNS times (default 1) as a new process with the same
+command line. Each run does what a normal start does until the window is drawn,
+including a pre-discovery hook that may clone a missing repo or refresh an
+org listing, and then stops. The work scheduled after that (orphan warning, startup
+auto-update, upgrade check) never runs. The table gives each phase for the
+first run, which may read from a cold disk cache, and the median and range of
+the other runs, in seconds from the moment the process started:
+
+```text
+$ python3 installer.py --startup-time 5
+phase (seconds)                                    run 1   median      min-max  of runs 2-5
+python start and wrapper, until the kit loads       0.09     0.15    0.14-0.17
+kit imports (tkinter, Pillow) and wrapper setup     0.20     0.22    0.20-0.22
+discovery                                           1.00     1.00    0.94-1.01
+  --advertise probes                                1.00     1.00    0.94-1.01
+Tk()                                                0.11     0.11    0.09-0.18
+window                                              2.59     2.23    1.89-3.90
+  rows and widgets                                  1.01     0.84    0.79-2.40
+    icon lookup and load (36x, summed)              0.52     0.41    0.40-1.89
+    other                                           0.49     0.43    0.39-0.50
+  size and layout                                   1.34     1.21    0.91-1.30
+first draw                                          0.30     0.30    0.28-0.35
+total, start to first drawn window                  4.29     4.02    3.58-5.82
+```
+
+Below the table it lists how many `--advertise` probes ran, how many at a time,
+and the five slowest. A wrapper's own discoverer, such as one that rebuilds a
+groups file, counts under "discoverer". On the text screen the measurement ends
+before curses starts.
+
 ### Upgrades
 
 When the window or the text screen opens, the installer checks in the

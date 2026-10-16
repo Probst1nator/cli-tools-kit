@@ -62,7 +62,7 @@ except ImportError:  # pragma: no cover - exercised only where python3-tk is mis
 from typing import Dict, List, Optional
 
 from . import host, state, settings, discovery, install, sweep, autostart, icons, cli
-from . import upgrade
+from . import startup_timing, upgrade
 from .autostart_gate import (
     _parse_hhmm,
     current_ssids,
@@ -285,7 +285,8 @@ class InstallerApp:
         self.tools_by_key: Dict[str, discovery.ToolEntry] = {}  # For icon click lookup
         self.tk_frames: List[tk.Frame] = []  # tk.Frame instances that need bg updates on theme change
         self.tk_widgets: List[tk.Widget] = []  # Other tk widgets that need bg updates
-        self.usage_counts: Dict[str, int] = get_all_usage_counts()  # Tool usage statistics
+        with startup_timing.phase("usage counts"):
+            self.usage_counts: Dict[str, int] = get_all_usage_counts()  # Tool usage statistics
 
         # What upgrade.check() found; the strip above the table shows it and
         # survives a theme rebuild.
@@ -302,14 +303,22 @@ class InstallerApp:
             self.tools_by_key[key] = tool
 
         # Detect orphaned shortcuts (fast operation)
-        self.orphan_desktops = sweep.find_orphan_desktop_files()
-        self.orphan_aliases = sweep.find_orphan_aliases()
+        with startup_timing.phase("orphan sweep"):
+            self.orphan_desktops = sweep.find_orphan_desktop_files()
+            self.orphan_aliases = sweep.find_orphan_aliases()
 
         self._col_widths = self._column_widths()
         self._wrap_held = False   # see _position_window
-        self._setup_ui()
-        self._position_window()
+        with startup_timing.phase("rows and widgets"):
+            self._setup_ui()
+        with startup_timing.phase("size and layout"):
+            self._position_window()
         self.root.deiconify()  # Show now that it's properly sized
+        if startup_timing.ACTIVE:
+            # A --startup-time run ends at the first frame. The three steps
+            # below would come due inside that frame's update() and could
+            # rewrite shortcuts or reach the network.
+            return
 
         # Show orphan warning after window is visible
         if self.orphan_desktops or self.orphan_aliases:
@@ -1161,7 +1170,8 @@ class InstallerApp:
         if icon_name_or_path in self.icon_cache:
             return self.icon_cache[icon_name_or_path]
 
-        photo = icons.load_icon_image(icon_name_or_path, size=24)
+        with startup_timing.total("icon lookup and load"):
+            photo = icons.load_icon_image(icon_name_or_path, size=24)
         self.icon_cache[icon_name_or_path] = photo
         return photo
 

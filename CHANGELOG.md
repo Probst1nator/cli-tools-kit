@@ -8,6 +8,12 @@ Stability for what counts as the public surface.
 ## [Unreleased]
 
 ### Added
+- `--startup-time [RUNS]`: starts the window RUNS times as new processes,
+  each stopping at the first drawn frame, and prints how long each startup
+  phase took (imports, discovery and its `--advertise` probes, `Tk()`, row
+  building with icon loading, layout, first draw). The measured runs skip the
+  orphan warning, the startup auto-update and the upgrade check, so they
+  rewrite no shortcut and upgrade nothing. Module `cli_tools_kit.startup_timing`.
 - An MCP column. A tool that advertises `mcp_name` and `mcp_command` (the argv
   that starts its stdio server) gets an MCP checkbox, and the installer
   registers that command with each agent harness on the host. Built in:

@@ -11,6 +11,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from . import host
 from . import plugins
+from . import startup_timing
 from . import state
 from .autostart_gate import KNOWN_CONDITIONS
 
@@ -289,6 +290,11 @@ def _walk_tools_discoverer(root: str) -> List[tuple]:
     return found
 
 
+def _timed_probe(file_path: str, category: str) -> List[ToolEntry]:
+    with startup_timing.probe(file_path):
+        return get_metadata_native(file_path, category)
+
+
 def discover_tools(run_pre: bool = True) -> List[ToolEntry]:
     """Scan configured DISCOVERY_ROOTS for installable tools.
 
@@ -301,7 +307,8 @@ def discover_tools(run_pre: bool = True) -> List[ToolEntry]:
     can never reach the network.
     """
     if run_pre and state.PRE_DISCOVERY is not None:
-        state.PRE_DISCOVERY(state.REFRESH_REPOS)
+        with startup_timing.phase("pre-discovery hook (clone, pull)"):
+            state.PRE_DISCOVERY(state.REFRESH_REPOS)
 
     roots = state.DISCOVERY_ROOTS or [state.ROOT_DIR]
     # A single root_dir keeps the flat/tools_* layouts it has always used; the
@@ -318,15 +325,20 @@ def discover_tools(run_pre: bool = True) -> List[ToolEntry]:
     # delay. map() preserves discovery order, get_metadata_native swallows its
     # own errors (returns []), and subprocess.run drops the GIL while waiting,
     # so threads parallelize the wall-clock time.
-    pairs = [(entry_point, category)
-             for root in roots
-             for entry_point, category in discoverer(root)]
+    with startup_timing.phase("discoverer (lists the tool directories)"):
+        pairs = [(entry_point, category)
+                 for root in roots
+                 for entry_point, category in discoverer(root)]
     tools = []
     if pairs:
-        with ThreadPoolExecutor(max_workers=min(len(pairs), 16)) as pool:
-            for entries in pool.map(lambda p: get_metadata_native(*p), pairs):
+        workers = min(len(pairs), 16)
+        startup_timing.info(probe_workers=workers)
+        with startup_timing.phase("--advertise probes"), \
+                ThreadPoolExecutor(max_workers=workers) as pool:
+            for entries in pool.map(lambda p: _timed_probe(*p), pairs):
                 tools.extend(entries)
-    tools = expand_plugin_targets(tools, state.PLUGIN_TARGETS)
+    with startup_timing.phase("plugin rows"):
+        tools = expand_plugin_targets(tools, state.PLUGIN_TARGETS)
     # Take note of skills whose installed copy is out of date vs. the tool's
     # bundled version (reported via the --advertise `skill_status` field) and
     # suggest the update. Printed once per discovery so a terminal run surfaces

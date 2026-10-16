@@ -32,6 +32,7 @@ walked through the setup.
 See PROTOCOL.md for the full --advertise specification.
 """
 
+from . import startup_timing  # noqa: F401  first, so --startup-time sees when the kit began loading
 from .tool_installer import ToolInstaller, ToolMetadata
 from .identity import InstallerIdentity, LEGACY_IDENTITY
 from .cron_installer import CronInstaller
