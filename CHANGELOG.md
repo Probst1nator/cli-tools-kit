@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-17
+
 ### Added
 - `--startup-time [RUNS]`: starts the window RUNS times as new processes,
   each stopping at the first drawn frame, and prints how long each startup
