@@ -36,6 +36,12 @@ Stability for what counts as the public surface.
   targets instead of only `~/.claude/skills`, each where the host has the
   harness. A wrapper's own `skill_targets` (such as AutomatedAlchemy's
   fauclaude target) still apply on the text screen only.
+- Discovery keeps each tool's `--advertise` answer in
+  `<cache dir>/advertise-cache.json` and probes a tool again only when a file
+  in its directory, the installed copy of its skill, the kit version or the
+  Python interpreter changed. On a 41-tool tree that cuts discovery from
+  0.45 s to 0.03 s. Code a tool imports from outside its own directory is not
+  watched; `--refresh` probes every tool again.
 
 ### Fixed
 - `testing.validate_advertise` rejected the documented plugin record: the tag

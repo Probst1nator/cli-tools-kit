@@ -24,6 +24,13 @@ The script MUST:
    slow module before answering the probe will time out and disappear from
    the parent's listing.
 
+The installer keeps each answer and runs the probe again only when a file in
+the script's directory changed, or the installed copy
+(`~/.claude/skills/<skill_name>/`) of a skill the answer names, or the kit
+version or the Python interpreter. So the answer should depend on nothing
+else: no clock, no environment variable, no file elsewhere. An answer that
+does goes stale until `--refresh`, which probes every tool again.
+
 ## Metadata schema
 
 Each dict in the list describes one installable variant of the tool.

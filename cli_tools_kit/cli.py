@@ -503,7 +503,8 @@ def main():
                              "cli-tools-kit for newer versions, and upgrade them (network).")
     parser.add_argument("--refresh", action="store_true",
                         help="Before discovery, run the configured PRE_DISCOVERY hook in refresh "
-                             "mode (e.g. ff-only pull every known repo checkout). No-op without a hook.")
+                             "mode (e.g. ff-only pull every known repo checkout), and probe every "
+                             "tool's --advertise again instead of using the cached answers.")
     parser.add_argument("--apply", metavar="NAMES", nargs="+",
                         help="Headless install: tool aliases/names, separated by commas "
                              "or spaces, or 'all'. Tools not listed are left alone. Skills "

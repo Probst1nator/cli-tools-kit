@@ -176,6 +176,16 @@ def engine(sandbox_home: Path, fake_tree: Path, monkeypatch: pytest.MonkeyPatch,
 
 
 @pytest.fixture(autouse=True)
+def advertise_cache(tmp_path_factory: pytest.TempPathFactory,
+                    monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Give every test its own empty --advertise cache, outside the real ~/.cache."""
+    from cli_tools_kit import discovery
+    path = tmp_path_factory.mktemp("advertise") / discovery.ADVERTISE_CACHE_NAME
+    monkeypatch.setattr(discovery, "_advertise_cache_file", lambda: str(path))
+    return path
+
+
+@pytest.fixture(autouse=True)
 def no_real_harnesses(tmp_path_factory: pytest.TempPathFactory,
                       monkeypatch: pytest.MonkeyPatch) -> Path:
     """Keep the built-in skill and MCP targets off this host's Claude Code and opencode.

@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import subprocess
 import sys
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, NamedTuple, Optional, Tuple
 
@@ -160,6 +162,122 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
         pass
 
     return entries
+
+
+# ================= ADVERTISE CACHE =================
+#
+# Probing every tool with --advertise starts one Python process per tool, which
+# took 0.45 s of every start on a 41-tool tree, 16 at a time (2026-10-17). A
+# tool's answer changes when its files do, so discover_tools keeps each answer
+# with a fingerprint: the kit version, the interpreter, every file below the
+# tool's directory (minus virtualenvs and caches) and the installed copy of
+# each skill it names, because skill_status is computed against that copy. Any
+# changed mtime or size means a new probe. Code a tool imports from outside its
+# own directory is not covered; --refresh probes everything again. A directory
+# of more than _FINGERPRINT_MAX_FILES files is probed every time.
+
+ADVERTISE_CACHE_NAME = "advertise-cache.json"
+_FINGERPRINT_SKIP = frozenset({".venv", "venv", "__pycache__", ".git", "node_modules",
+                               ".mypy_cache", ".pytest_cache"})
+_FINGERPRINT_MAX_FILES = 5000
+
+
+def _advertise_cache_file() -> str:
+    return os.path.join(state.IDENTITY.cache_path, ADVERTISE_CACHE_NAME)
+
+
+def _tree_signature(path: str, limit: Optional[int] = None) -> Optional[List[list]]:
+    """[relative path, mtime_ns, size] of every file below *path*, sorted.
+
+    None when there are more than *limit* files: stat-ing them would cost
+    more than the probe it saves.
+    """
+    sig = []
+    pending = [(path, "")]
+    while pending:
+        directory, prefix = pending.pop()
+        try:
+            with os.scandir(directory) as it:
+                entries = list(it)
+        except OSError:
+            continue
+        for entry in entries:
+            try:
+                if entry.is_dir(follow_symlinks=False):
+                    if entry.name not in _FINGERPRINT_SKIP:
+                        pending.append((entry.path, prefix + entry.name + "/"))
+                    continue
+                st = entry.stat()
+            except OSError:
+                continue
+            sig.append([prefix + entry.name, st.st_mtime_ns, st.st_size])
+            if limit is not None and len(sig) > limit:
+                return None
+    sig.sort()
+    return sig
+
+
+def _advertise_fingerprint(file_path: str, category: str, tool_sig: List[list],
+                           entries: List[ToolEntry]) -> str:
+    from . import __version__  # noqa: PLC0415 — the package imports this module
+
+    skills = sorted({e.skill_name for e in entries if e.skill_name})
+    blob = json.dumps([__version__, sys.executable, file_path, category, tool_sig,
+                       [[name, _tree_signature(os.path.join(
+                           os.path.expanduser("~"), ".claude", "skills", name))]
+                        for name in skills]])
+    return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _entries_from(rows) -> Optional[List[ToolEntry]]:
+    """The ToolEntry list a cache record holds, or None when it does not fit."""
+    try:
+        return [ToolEntry(**{**row, "mcp_command": tuple(row.get("mcp_command") or ())})
+                for row in rows]
+    except (TypeError, AttributeError):
+        return None
+
+
+def _load_advertise_cache() -> Dict[str, dict]:
+    try:
+        with open(_advertise_cache_file(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_advertise_cache(cache: Dict[str, dict]) -> None:
+    """Write *cache* atomically, minus the scripts that no longer exist."""
+    kept = {path: entry for path, entry in cache.items() if os.path.isfile(path)}
+    path = _advertise_cache_file()
+    tmp = None
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd, tmp = tempfile.mkstemp(dir=os.path.dirname(path), suffix=".tmp")
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            json.dump(kept, fh)
+        os.replace(tmp, path)
+    except (OSError, TypeError, ValueError):
+        # The next start probes again.
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+def _cache_hit(key: str, category: str, tool_sig: Optional[List[list]],
+               cache: Dict[str, dict]) -> Optional[List[ToolEntry]]:
+    """The cached entries for the script *key* while its fingerprint holds, else None."""
+    record = cache.get(key)
+    if tool_sig is None or state.REFRESH_REPOS or not isinstance(record, dict):
+        return None
+    entries = _entries_from(record.get("entries") or [])
+    if entries and record.get("fingerprint") == _advertise_fingerprint(
+            key, category, tool_sig, entries):
+        return entries
+    return None
 
 
 def expand_plugin_targets(tools: List[ToolEntry], targets) -> List[ToolEntry]:
@@ -324,19 +442,45 @@ def discover_tools(run_pre: bool = True) -> List[ToolEntry]:
     # `--check`, so the serial cost (≈Ntools × spawn) was the whole startup
     # delay. map() preserves discovery order, get_metadata_native swallows its
     # own errors (returns []), and subprocess.run drops the GIL while waiting,
-    # so threads parallelize the wall-clock time.
+    # so threads parallelize the wall-clock time. A tool whose files have not
+    # changed since its last probe is answered from the advertise cache.
     with startup_timing.phase("discoverer (lists the tool directories)"):
         pairs = [(entry_point, category)
                  for root in roots
                  for entry_point, category in discoverer(root)]
     tools = []
     if pairs:
-        workers = min(len(pairs), 16)
-        startup_timing.info(probe_workers=workers)
-        with startup_timing.phase("--advertise probes"), \
-                ThreadPoolExecutor(max_workers=workers) as pool:
-            for entries in pool.map(lambda p: _timed_probe(*p), pairs):
-                tools.extend(entries)
+        cache = _load_advertise_cache()
+        keys = [os.path.abspath(entry_point) for entry_point, _ in pairs]
+        with startup_timing.phase("advertise cache (fingerprints)"):
+            # Taken before any probe, so a file edited while its tool runs
+            # makes the next start probe again.
+            sigs = [_tree_signature(os.path.dirname(key), _FINGERPRINT_MAX_FILES)
+                    for key in keys]
+            found = [_cache_hit(key, category, sig, cache)
+                     for key, (_, category), sig in zip(keys, pairs, sigs)]
+        misses = [i for i, entries in enumerate(found) if entries is None]
+        if misses:
+            workers = min(len(misses), 16)
+            startup_timing.info(probe_workers=workers)
+            stored = False
+            with startup_timing.phase("--advertise probes"), \
+                    ThreadPoolExecutor(max_workers=workers) as pool:
+                for i, entries in zip(misses, pool.map(lambda i: _timed_probe(*pairs[i]),
+                                                       misses)):
+                    found[i] = entries
+                    sig = sigs[i]
+                    if entries and sig is not None:
+                        cache[keys[i]] = {
+                            "fingerprint": _advertise_fingerprint(keys[i], pairs[i][1],
+                                                                  sig, entries),
+                            "entries": [e._asdict() for e in entries],
+                        }
+                        stored = True
+            if stored:
+                _save_advertise_cache(cache)
+        for entries in found:
+            tools.extend(entries or [])
     with startup_timing.phase("plugin rows"):
         tools = expand_plugin_targets(tools, state.PLUGIN_TARGETS)
     # Take note of skills whose installed copy is out of date vs. the tool's

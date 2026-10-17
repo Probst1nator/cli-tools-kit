@@ -32,6 +32,48 @@ def test_discovery_reads_every_tool(engine) -> None:
     assert tools["skilltool"].skill_name == "skilltool"
 
 
+def _count_probes(monkeypatch) -> list:
+    from cli_tools_kit import discovery
+    probed = []
+    probe = discovery.get_metadata_native
+
+    def counting(file_path, category):
+        probed.append(os.path.basename(os.path.dirname(file_path)))
+        return probe(file_path, category)
+    monkeypatch.setattr(discovery, "get_metadata_native", counting)
+    return probed
+
+
+def test_an_unchanged_tool_is_answered_from_the_cache(engine, monkeypatch) -> None:
+    from cli_tools_kit import state
+    first = _tools(engine)
+    probed = _count_probes(monkeypatch)
+    assert _tools(engine) == first
+    assert probed == []
+
+    monkeypatch.setattr(state, "REFRESH_REPOS", True)
+    _tools(engine)
+    assert sorted(probed) == ["clitool", "crontool", "guitool", "skilltool"]
+
+
+def test_an_edited_tool_is_probed_again(engine, fake_tree: Path, monkeypatch) -> None:
+    _tools(engine)
+    probed = _count_probes(monkeypatch)
+    script = fake_tree / "clitool" / "main.py"
+    script.write_text(script.read_text(encoding="utf-8").replace(
+        "A CLI tool", "A changed CLI tool"), encoding="utf-8")
+    assert _tools(engine)["clitool"].description == "A changed CLI tool"
+    assert probed == ["clitool"]
+
+
+def test_an_installed_skill_is_probed_again(engine, monkeypatch) -> None:
+    tool = _tools(engine)["skilltool"]
+    probed = _count_probes(monkeypatch)
+    assert engine.install_skill_for_tool(tool)[0]
+    _tools(engine)
+    assert probed == ["skilltool"]
+
+
 @pytest.mark.parametrize("alias", ["clitool", "guitool"])
 def test_install_then_remove(engine, alias: str) -> None:
     tool = _tools(engine)[alias]
