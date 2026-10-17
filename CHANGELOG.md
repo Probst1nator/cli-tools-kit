@@ -8,8 +8,11 @@ Stability for what counts as the public surface.
 ## [Unreleased]
 
 ### Changed
-- The LLM grouping builds its tool blurbs in parallel, up to 16 `--advertise`
-  runs at a time, as discovery does.
+- The grouping runs each tool's `--advertise` once per build, up to 16 at a
+  time, as discovery does. Before, each tier probed again, and the capability
+  and embedding tiers probed one tool at a time. New
+  `taxonomy.corpus.tool_advertisements()`; `tool_blurbs`, `tool_capabilities`
+  and `tool_documents` take its result.
 - The window's update badge counts newer versions as well as stale shortcuts.
   Its tooltip lists both, and when nothing is pending it says when versions
   were last checked online and what that check leaves out. A click refreshes

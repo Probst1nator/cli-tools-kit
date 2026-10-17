@@ -14,7 +14,7 @@ import os
 import subprocess
 import sys
 from concurrent.futures import ThreadPoolExecutor
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Tuple
 
 MAX_CHARS = 6000
 BLURB_MAX_CHARS = 700
@@ -70,10 +70,25 @@ def _advertise_entries(tool_path: str) -> List[dict]:
     return []
 
 
-def _advertise_text(tool_path: str) -> str:
+def tool_advertisements(root: str, names: Optional[List[str]] = None) -> Dict[str, List[dict]]:
+    """Each tool's --advertise entries, all tools by default.
+
+    Runs up to PROBE_WORKERS probes at a time, as discovery does. A caller
+    that needs them for several of the functions below runs this once and
+    passes the result on.
+    """
+    names = tool_dirs(root) if names is None else names
+    if not names:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(len(names), PROBE_WORKERS)) as pool:
+        return dict(zip(names, pool.map(
+            lambda name: _advertise_entries(os.path.join(root, name)), names)))
+
+
+def _advertise_text(entries: List[dict]) -> str:
     """The tool's advertised names, descriptions and taxonomy words."""
     parts = []
-    for entry in _advertise_entries(tool_path):
+    for entry in entries:
         for key in ("name", "desc", "capability", "domain"):
             value = entry.get(key)
             if value:
@@ -81,17 +96,21 @@ def _advertise_text(tool_path: str) -> str:
     return "\n".join(parts)
 
 
-def tool_capabilities(root: str) -> Dict[str, str]:
+def tool_capabilities(root: str,
+                      advertised: Optional[Dict[str, List[dict]]] = None) -> Dict[str, str]:
     """Map each tool to its advertised capability word, "" when it has none.
 
     The capability is hand-written, validated against CAPABILITY_VOCAB, and
     needs no network to read — which is what makes it usable as the last-resort
-    grouping on a host with no API key.
+    grouping on a host with no API key. ``advertised`` is
+    :func:`tool_advertisements`; without it the tools are probed.
     """
+    if advertised is None:
+        advertised = tool_advertisements(root)
     caps = {}
     for name in tool_dirs(root):
         capability = ""
-        for entry in _advertise_entries(os.path.join(root, name)):
+        for entry in advertised.get(name, []):
             value = str(entry.get("capability") or "").strip()
             if value:
                 capability = value
@@ -100,9 +119,16 @@ def tool_capabilities(root: str) -> Dict[str, str]:
     return caps
 
 
-def tool_documents(root: str) -> Dict[str, str]:
-    """Map each tool directory name to its document text."""
+def tool_documents(root: str,
+                   advertised: Optional[Dict[str, List[dict]]] = None) -> Dict[str, str]:
+    """Map each tool directory name to its document text.
+
+    A tool without CLAUDE.md and README.md is described by what it
+    advertises. ``advertised`` is :func:`tool_advertisements`; without it
+    only those tools are probed.
+    """
     docs = {}
+    undocumented = []
     for name in tool_dirs(root):
         path = os.path.join(root, name)
         chunks = [name.replace("_", " ")]
@@ -115,10 +141,14 @@ def tool_documents(root: str) -> Dict[str, str]:
                 except OSError:
                     pass
         if len(chunks) == 1:
-            advertised = _advertise_text(path)
-            if advertised:
-                chunks.append(advertised)
+            undocumented.append(name)
         docs[name] = "\n\n".join(chunks)[:MAX_CHARS]
+    if advertised is None:
+        advertised = tool_advertisements(root, undocumented)
+    for name in undocumented:
+        text = _advertise_text(advertised.get(name, []))
+        if text:
+            docs[name] = f"{docs[name]}\n\n{text}"[:MAX_CHARS]
     return docs
 
 
@@ -218,9 +248,9 @@ def _clean_markdown(text: str) -> Tuple[List[str], List[str]]:
     return paragraphs, headings
 
 
-def _advertise_fields(tool_path: str) -> List[str]:
+def _advertise_fields(entries: List[dict]) -> List[str]:
     """Advertised name/desc/capability/domain lines, deduplicated in order."""
-    text = _advertise_text(tool_path)
+    text = _advertise_text(entries)
     seen = set()
     fields = []
     for line in text.splitlines():
@@ -231,18 +261,21 @@ def _advertise_fields(tool_path: str) -> List[str]:
     return fields
 
 
-def tool_blurb(root: str, name: str) -> str:
+def tool_blurb(root: str, name: str, entries: Optional[List[dict]] = None) -> str:
     """A short, comparable description of one tool, for the LLM grouping.
 
     Built from, in order: the advertised name/desc/capability/domain, the first
     couple of real prose paragraphs of CLAUDE.md or README.md, and that doc's
     section headings (which name features in very few tokens). Capped at
     BLURB_MAX_CHARS so a heavily documented tool cannot outweigh a bare one.
+    ``entries`` is what the tool advertises; without it the tool is probed.
     """
     path = os.path.join(root, name)
     parts = [f"directory: {name}"]
 
-    fields = _advertise_fields(path)
+    if entries is None:
+        entries = _advertise_entries(path)
+    fields = _advertise_fields(entries)
     if fields:
         parts.append("advertises: " + " | ".join(fields))
 
@@ -265,14 +298,14 @@ def tool_blurb(root: str, name: str) -> str:
     return "\n".join(parts)[:BLURB_MAX_CHARS]
 
 
-def tool_blurbs(root: str) -> Dict[str, str]:
+def tool_blurbs(root: str,
+                advertised: Optional[Dict[str, List[dict]]] = None) -> Dict[str, str]:
     """One condensed blurb per tool.
 
-    Each blurb runs the tool's --advertise, so they are built up to
-    PROBE_WORKERS at a time, as discovery runs its probes.
+    ``advertised`` is :func:`tool_advertisements`; without it the tools are
+    probed.
     """
-    names = tool_dirs(root)
-    if not names:
-        return {}
-    with ThreadPoolExecutor(max_workers=min(len(names), PROBE_WORKERS)) as pool:
-        return dict(zip(names, pool.map(lambda name: tool_blurb(root, name), names)))
+    if advertised is None:
+        advertised = tool_advertisements(root)
+    return {name: tool_blurb(root, name, advertised.get(name, []))
+            for name in tool_dirs(root)}

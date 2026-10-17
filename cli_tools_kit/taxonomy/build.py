@@ -31,6 +31,7 @@ from .capability import capability_groups
 from .cluster import cluster_documents
 from .corpus import (
     corpus_fingerprint,
+    tool_advertisements,
     tool_blurbs,
     tool_capabilities,
     tool_documents,
@@ -80,12 +81,21 @@ def build_groups(
     if not isinstance(categories, list) or len(categories) != k:
         categories = None
 
+    # Every tier reads what the tools advertise; probe them once, when the
+    # first tier that needs it runs.
+    probed: Dict[str, List[dict]] = {}
+
+    def advertised() -> Dict[str, List[dict]]:
+        if not probed:
+            probed.update(tool_advertisements(root, names))
+        return probed
+
     labels: Dict[str, List[str]] = {}
     used = ""
     if method in ("auto", "llm"):
         try:
             labels = llm_groups(
-                tool_blurbs(root), k, budget=budget, categories=categories
+                tool_blurbs(root, advertised()), k, budget=budget, categories=categories
             )
             used = active_label() or "llm"
         except LLMGroupingUnavailable:
@@ -94,19 +104,19 @@ def build_groups(
 
     if not labels and method in ("auto", "capability"):
         if stored or method == "capability":
-            labels = capability_groups(tool_capabilities(root), stored or None)
+            labels = capability_groups(tool_capabilities(root, advertised()), stored or None)
             used = "capability" + (":extended" if stored else "")
 
     if not labels and method in ("auto", "embed"):
         try:
-            labels = _embed_groups(root, names, k, seed)
+            labels = _embed_groups(root, k, seed, advertised())
             used = f"embed-kmeans:{backend_name()}"
         except EmbeddingUnavailable:
             if method == "embed":
                 raise
 
     if not labels:
-        labels = capability_groups(tool_capabilities(root), stored or None)
+        labels = capability_groups(tool_capabilities(root, advertised()), stored or None)
         used = "capability"
 
     payload = {
@@ -137,10 +147,10 @@ def _carry_scopes(
 
 
 def _embed_groups(
-    root: str, names: List[str], k: int, seed: int
+    root: str, k: int, seed: int, advertised: Dict[str, List[dict]]
 ) -> Dict[str, List[str]]:
     """Offline fallback: embed the full documents and k-means them."""
-    docs = tool_documents(root)
+    docs = tool_documents(root, advertised)
     ordered = sorted(docs)
     vectors = embed_texts([docs[n] for n in ordered])
     groups: List[Tuple[str, List[str]]] = cluster_documents(

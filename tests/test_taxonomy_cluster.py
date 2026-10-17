@@ -240,6 +240,30 @@ def test_tool_blurbs_keep_each_tool_with_its_own_advertise(tmp_path):
         assert f"does {name}" in blurbs[name]
 
 
+def test_a_build_probes_each_tool_once(tmp_path, monkeypatch):
+    """The LLM tier fails and the capability tier takes over. Both read what
+    the tools advertise, from one probe per tool."""
+    from cli_tools_kit.taxonomy import build, llm_groups
+
+    for name, capability in (("alpha", "tts"), ("beta", "scrape")):
+        _write_tool(tmp_path, name, main_py=(
+            "import json\n"
+            f"print(json.dumps({{'name': '{name}', 'capability': '{capability}'}}))\n"))
+    _write_groups(tmp_path, {"k": 6, "labels": {"Audio": ["alpha"]}})
+    probes = []
+    real = corpus._advertise_entries
+    monkeypatch.setattr(corpus, "_advertise_entries",
+                        lambda path: probes.append(os.path.basename(path)) or real(path))
+
+    def no_llm(*args, **kwargs):
+        raise llm_groups.LLMGroupingUnavailable("offline")
+
+    monkeypatch.setattr(build, "llm_groups", no_llm)
+    payload = build.build_groups(str(tmp_path), write=False)
+    assert payload["method"] == "capability:extended"
+    assert sorted(probes) == ["alpha", "beta"]
+
+
 # --- staleness and ensure_groups ------------------------------------------
 
 def _write_current_groups(tmp_path, k=6, **extra):
