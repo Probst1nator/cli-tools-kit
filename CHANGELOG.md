@@ -47,6 +47,9 @@ Stability for what counts as the public surface.
   nothing says "Already up to date, nothing changed".
 - Hovering "✓ Up to date" shows a tooltip that says what the check covers.
   Before, the tooltip appeared only when updates were pending.
+- A summary with errors ("Done: …, 2 errors") was logged with a `warning` tag
+  that had no colour, so it showed as plain text. It now shows in the
+  theme's warning colour.
 
 ## [1.5.1] - 2026-10-15
 

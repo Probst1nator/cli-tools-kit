@@ -1111,6 +1111,7 @@ class InstallerApp:
         self.log_text.tag_configure("info", foreground=t["log_fg"])
         self.log_text.tag_configure("success", foreground=t["success"])
         self.log_text.tag_configure("error", foreground=t["error"])
+        self.log_text.tag_configure("warning", foreground=t["category"])
         self.log_text.tag_configure("header", foreground=t["muted"], font=("monospace", 9, "bold"))
 
         # Replay log history so theme rebuilds don't wipe the log.
@@ -3701,7 +3702,7 @@ class InstallerApp:
             self.log_clear_btn.grid_forget()
 
     def _log(self, message: str, tag: str = "info"):
-        """Append a message to the log with the specified tag (info, success, error, header)."""
+        """Append a message to the log with the specified tag (info, success, warning, error, header)."""
         if not hasattr(self, "_log_history"):
             self._log_history = []
         self._log_history.append((message, tag))
