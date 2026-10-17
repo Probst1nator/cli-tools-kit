@@ -168,7 +168,7 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
 # ================= ADVERTISE CACHE =================
 #
 # Probing every tool with --advertise starts one Python process per tool, which
-# took 0.45 s of every start on a 41-tool tree, 16 at a time (2026-10-17). A
+# took about 0.25 s of every start on a 41-tool tree, 16 at a time. A
 # tool's answer changes when its files do, so discover_tools keeps each answer
 # with a fingerprint: the kit version and the modules that parse the answer,
 # the interpreter, every file below the tool's directory and the installed copy

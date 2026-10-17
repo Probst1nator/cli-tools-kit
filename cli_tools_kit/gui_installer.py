@@ -3509,8 +3509,8 @@ class InstallerApp:
         """(skill targets, MCP targets) whose harness this host has, read once per build.
 
         Skills use the built-in Claude Code and opencode targets: a wrapper's
-        ``run(skill_targets=...)`` applies on the text screen only (user
-        decision, 2026-10-16). MCP servers use the wrapper's
+        ``run(skill_targets=...)`` applies on the text screen only. MCP
+        servers use the wrapper's
         ``run(mcp_targets=...)``, else the built-in ones.
         """
         if self._harnesses is None:
