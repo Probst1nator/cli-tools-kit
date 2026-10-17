@@ -2762,17 +2762,19 @@ class InstallerApp:
         Header and row renderers all build their columns through this so the
         table grid stays aligned. Cells fill the container's height (the
         height=24 is only a floor for the header row, whose labels are short).
+        The grid line is the container itself, in the border color, showing
+        through a 1px gap left of each cell: one frame per line cost about 320
+        widgets in a 50-row window. Row hover repaints only panel-colored
+        frames, so it leaves the container alone.
         """
+        container.configure(bg=self.theme["border"])
         cells: Dict[str, tk.Frame] = {}
         for col_key, _ in RIGHT_COLS:
             width = self._col_widths[col_key]
-            sep = tk.Frame(container, width=1, bg=self.theme["border"],
-                           highlightthickness=0)
-            sep.pack(side="left", fill="y")
             cell_bg = _DEBUG_CELL_COLORS[col_key] if DEBUG_LAYOUT else bg
             cell = tk.Frame(container, width=width, height=24, bg=cell_bg,
                             highlightthickness=0)
-            cell.pack(side="left", fill="y")
+            cell.pack(side="left", fill="y", padx=(1, 0))
             cell.pack_propagate(False)
             self.tk_frames.append(cell)
             cells[col_key] = cell

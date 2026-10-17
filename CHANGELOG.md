@@ -64,6 +64,10 @@ Stability for what counts as the public surface.
   them in directories that do not exist. The theme is now read once per
   process and missing directories are remembered, which brings it to under
   0.1 s for 36 icons. The lookup order and its results are unchanged.
+- Each vertical line of the tools table was a 1px frame of its own, 312 of
+  the window's 1,642 widgets with 52 rows. The cells now leave a 1px gap on a
+  border-colored row, which draws the same pixels and takes about 0.4 s off
+  the layout before the first frame.
 - The tool grouping never found `GEMINI_API_KEY` in the grouped tree's `.env`.
   It looked two directories above its own module, which for an installed kit
   is `site-packages`, so it fell back to a local model or the capability
