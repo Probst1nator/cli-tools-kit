@@ -2,6 +2,7 @@
 
 import json
 import math
+import os
 
 import pytest
 
@@ -365,6 +366,27 @@ def test_gemini_rest_is_the_fallback(monkeypatch):
 
     assert embedder.embed_texts(["one"]) == [[0.5, 0.5]]
     assert any("batchEmbedContents" in url for url in calls)
+
+
+def test_load_tree_key_reads_only_the_key(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text(
+        "HASS_TOKEN=other-secret\nexport GEMINI_API_KEY=\"tree-key\"  # comment\n")
+    monkeypatch.setenv("GEMINI_API_KEY", "")
+    monkeypatch.delenv("HASS_TOKEN", raising=False)
+
+    embedder.load_tree_key(str(tmp_path))
+
+    assert os.environ["GEMINI_API_KEY"] == "tree-key"
+    assert "HASS_TOKEN" not in os.environ
+
+
+def test_load_tree_key_keeps_a_key_already_set(tmp_path, monkeypatch):
+    (tmp_path / ".env").write_text("GEMINI_API_KEY=tree-key\n")
+    monkeypatch.setenv("GEMINI_API_KEY", "env-key")
+
+    embedder.load_tree_key(str(tmp_path))
+
+    assert os.environ["GEMINI_API_KEY"] == "env-key"
 
 
 def test_embed_texts_on_empty_list():

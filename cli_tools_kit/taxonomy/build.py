@@ -35,7 +35,7 @@ from .corpus import (
     tool_capabilities,
     tool_documents,
 )
-from .embedder import EmbeddingUnavailable, backend_name, embed_texts
+from .embedder import EmbeddingUnavailable, backend_name, embed_texts, load_tree_key
 from .groups import groups_path, read_groups_file
 from .llm_groups import (
     LLMGroupingUnavailable,
@@ -73,6 +73,7 @@ def build_groups(
     names = tool_dirs(root)
     if not names:
         raise ValueError("no tools found")
+    load_tree_key(root)
     previous = read_groups_file(root)
     stored = previous.get("labels") or {}
     categories = None if rename else previous.get("categories")

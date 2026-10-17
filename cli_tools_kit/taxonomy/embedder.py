@@ -33,6 +33,39 @@ def _load_env() -> None:
     load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 
+def load_tree_key(root: str) -> None:
+    """Set GEMINI_API_KEY from ``<root>/.env`` when the environment has none.
+
+    The key sits in the .env of the tree being grouped. _load_env does not
+    reach it once the kit is installed as a package, because ROOT_DIR is then
+    the package's parent directory. Only this one variable is read, so the
+    file's other secrets stay out of the environment the installer's tools
+    inherit.
+    """
+    if os.getenv("GEMINI_API_KEY", "").strip():
+        return
+    try:
+        with open(os.path.join(root, ".env"), encoding="utf-8") as fh:
+            lines = fh.read().splitlines()
+    except OSError:
+        return
+    for line in lines:
+        line = line.strip()
+        if line.startswith("export "):
+            line = line[len("export "):].lstrip()
+        name, sep, value = line.partition("=")
+        if not sep or name.strip() != "GEMINI_API_KEY":
+            continue
+        value = value.strip()
+        if value[:1] in ("'", '"'):
+            value = value[1:].split(value[0], 1)[0]
+        else:
+            value = value.split(" #", 1)[0].strip()
+        if value:
+            os.environ["GEMINI_API_KEY"] = value
+        return
+
+
 def local_host() -> str:
     """Base URL of the local OpenAI-compatible server."""
     host = (

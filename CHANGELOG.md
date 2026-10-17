@@ -58,6 +58,11 @@ Stability for what counts as the public surface.
   them in directories that do not exist. The theme is now read once per
   process and missing directories are remembered, which brings it to under
   0.1 s for 36 icons. The lookup order and its results are unchanged.
+- The tool grouping never found `GEMINI_API_KEY` in the grouped tree's `.env`.
+  It looked two directories above its own module, which for an installed kit
+  is `site-packages`, so it fell back to a local model or the capability
+  tier. `build_groups` now reads that one variable from `<root>/.env` when
+  the environment has none, and leaves the file's other variables alone.
 
 ## [1.5.1] - 2026-10-15
 
