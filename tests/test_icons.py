@@ -41,7 +41,9 @@ def test_an_icon_in_a_status_or_applets_directory_is_found(sandbox_home: Path,
         found[category] = icon
     try:
         for category, icon in found.items():
-            assert icons.find_icon_path(f"kit-test-{category}", 24) == str(icon)
+            # Path(): on Windows expanduser leaves the ~/.local part with slashes.
+            path = icons.find_icon_path(f"kit-test-{category}", 24)
+            assert path is not None and Path(path) == icon
     finally:
         icons._is_icon_dir.cache_clear()
 
