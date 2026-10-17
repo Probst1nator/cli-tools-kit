@@ -196,11 +196,13 @@ def _tree_signature(path: str, limit: Optional[int] = None) -> Optional[List[lis
     """[relative path, mtime_ns, size] of every file below *path*, sorted.
 
     A directory in _FINGERPRINT_SKIP appears as its path with a trailing
-    slash and no contents. None when there are more than *limit* files:
+    slash and no contents. A symlinked directory is followed once per real
+    path, so a loop ends. None when there are more than *limit* files:
     stat-ing them would cost more than the probe it saves.
     """
     sig = []
     pending = [(path, "")]
+    seen = {os.path.realpath(path)}
     while pending:
         directory, prefix = pending.pop()
         try:
@@ -210,11 +212,16 @@ def _tree_signature(path: str, limit: Optional[int] = None) -> Optional[List[lis
             continue
         for entry in entries:
             try:
-                if entry.is_dir(follow_symlinks=False):
+                if entry.is_dir():
                     if entry.name in _FINGERPRINT_SKIP:
                         sig.append([prefix + entry.name + "/", 0, 0])
-                    else:
-                        pending.append((entry.path, prefix + entry.name + "/"))
+                        continue
+                    if entry.is_symlink():
+                        real = os.path.realpath(entry.path)
+                        if real in seen:
+                            continue
+                        seen.add(real)
+                    pending.append((entry.path, prefix + entry.name + "/"))
                     continue
                 st = entry.stat()
             except OSError:

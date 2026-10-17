@@ -81,6 +81,24 @@ def test_state_in_data_keeps_the_cache_but_a_new_venv_does_not(engine, fake_tree
     assert probed == ["clitool", "guitool"]
 
 
+def test_a_change_inside_a_symlinked_directory_is_probed_again(engine, fake_tree: Path,
+                                                               tmp_path: Path,
+                                                               monkeypatch) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "lib.py").write_text("A = 1\n", encoding="utf-8")
+    try:
+        (fake_tree / "clitool" / "lib").symlink_to(shared, target_is_directory=True)
+        (shared / "loop").symlink_to(fake_tree / "clitool", target_is_directory=True)
+    except OSError as exc:  # Windows without the symlink privilege
+        pytest.skip(f"cannot create symlinks: {exc}")
+    _tools(engine)
+    probed = _count_probes(monkeypatch)
+    (shared / "lib.py").write_text("A = 22\n", encoding="utf-8")
+    _tools(engine)
+    assert probed == ["clitool"]
+
+
 def test_an_installed_skill_is_probed_again(engine, monkeypatch) -> None:
     tool = _tools(engine)["skilltool"]
     probed = _count_probes(monkeypatch)
