@@ -105,7 +105,7 @@ def _have_api_key() -> bool:
         _load_env()
     except ImportError:  # pragma: no cover - depends on the venv
         pass
-    return bool(os.getenv("GEMINI_API_KEY", "").strip())
+    return bool(_gemini_key())
 
 
 def backend_order() -> List[str]:
@@ -436,7 +436,7 @@ def _gemini_rest(prompt: str) -> str:
     nothing but GEMINI_API_KEY and the standard library, which is what makes
     the LLM tier available to a third-party checkout at all.
     """
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = _gemini_key()
     if not api_key:
         return ""
     url = (f"https://generativelanguage.googleapis.com/v1beta/models/"
@@ -459,6 +459,14 @@ def _gemini_rest(prompt: str) -> str:
     return "".join(p.get("text", "") for p in parts if isinstance(p, dict))
 
 
+def _gemini_key() -> str:
+    try:
+        from .embedder import gemini_key
+    except ImportError:  # pragma: no cover - defensive
+        return os.getenv("GEMINI_API_KEY", "").strip()
+    return gemini_key()
+
+
 def _ask_gemini(prompt: str, fresh: bool = False) -> str:
     """One Gemini call. Raises LLMGroupingUnavailable if it cannot be made.
 
@@ -479,7 +487,7 @@ def _ask_gemini(prompt: str, fresh: bool = False) -> str:
 
     if GeminiClient is not None:
         try:
-            client = GeminiClient(models=[model_name()])
+            client = GeminiClient(api_key=_gemini_key() or None, models=[model_name()])
             reply = client.generate(prompt, json_mode=True, label="", skip_cache=fresh)
             if reply:
                 return reply

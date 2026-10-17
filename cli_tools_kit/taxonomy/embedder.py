@@ -33,15 +33,25 @@ def _load_env() -> None:
     load_dotenv(os.path.join(ROOT_DIR, ".env"))
 
 
+# GEMINI_API_KEY from the grouped tree's .env, see load_tree_key.
+_TREE_KEY = ""
+
+
+def gemini_key() -> str:
+    """GEMINI_API_KEY from the environment, else the one load_tree_key found."""
+    return os.getenv("GEMINI_API_KEY", "").strip() or _TREE_KEY
+
+
 def load_tree_key(root: str) -> None:
-    """Set GEMINI_API_KEY from ``<root>/.env`` when the environment has none.
+    """Read GEMINI_API_KEY from ``<root>/.env`` when the environment has none.
 
     The key sits in the .env of the tree being grouped. _load_env does not
     reach it once the kit is installed as a package, because ROOT_DIR is then
-    the package's parent directory. Only this one variable is read, so the
-    file's other secrets stay out of the environment the installer's tools
-    inherit.
+    the package's parent directory. Only this one variable is read, and it is
+    kept in this module, not in os.environ: the installer starts every tool
+    with its own environment, and those processes must not inherit the key.
     """
+    global _TREE_KEY
     if os.getenv("GEMINI_API_KEY", "").strip():
         return
     try:
@@ -62,7 +72,7 @@ def load_tree_key(root: str) -> None:
         else:
             value = value.split(" #", 1)[0].strip()
         if value:
-            os.environ["GEMINI_API_KEY"] = value
+            _TREE_KEY = value
         return
 
 
@@ -118,7 +128,7 @@ def _embed_gemini_client(texts: List[str]) -> List[List[float]]:
     except ImportError:
         return []
     try:
-        client = GeminiClient()
+        client = GeminiClient(api_key=gemini_key() or None)
         result = client.embed(texts)
     except Exception:
         return []
@@ -131,7 +141,7 @@ def _embed_gemini_client(texts: List[str]) -> List[List[float]]:
 
 def _embed_gemini_rest(texts: List[str]) -> List[List[float]]:
     """Direct REST call to the Gemini embedding endpoint. [] on failure."""
-    api_key = os.getenv("GEMINI_API_KEY", "")
+    api_key = gemini_key()
     if not api_key:
         return []
     model = "models/gemini-embedding-001"

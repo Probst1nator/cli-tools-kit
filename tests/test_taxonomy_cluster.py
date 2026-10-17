@@ -373,20 +373,25 @@ def test_load_tree_key_reads_only_the_key(tmp_path, monkeypatch):
         "HASS_TOKEN=other-secret\nexport GEMINI_API_KEY=\"tree-key\"  # comment\n")
     monkeypatch.setenv("GEMINI_API_KEY", "")
     monkeypatch.delenv("HASS_TOKEN", raising=False)
+    monkeypatch.setattr(embedder, "_TREE_KEY", "")
 
     embedder.load_tree_key(str(tmp_path))
 
-    assert os.environ["GEMINI_API_KEY"] == "tree-key"
+    assert embedder.gemini_key() == "tree-key"
+    # Tools the installer starts inherit os.environ, so neither secret goes there.
+    assert os.environ["GEMINI_API_KEY"] == ""
     assert "HASS_TOKEN" not in os.environ
 
 
 def test_load_tree_key_keeps_a_key_already_set(tmp_path, monkeypatch):
     (tmp_path / ".env").write_text("GEMINI_API_KEY=tree-key\n")
     monkeypatch.setenv("GEMINI_API_KEY", "env-key")
+    monkeypatch.setattr(embedder, "_TREE_KEY", "")
 
     embedder.load_tree_key(str(tmp_path))
 
-    assert os.environ["GEMINI_API_KEY"] == "env-key"
+    assert embedder.gemini_key() == "env-key"
+    assert embedder._TREE_KEY == ""
 
 
 def test_embed_texts_on_empty_list():
