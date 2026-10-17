@@ -19,6 +19,10 @@ Stability for what counts as the public surface.
   the shortcuts and checks versions online at once, outside the once-a-day
   limit. The upgrade strip at the top stays the place to upgrade. New
   `upgrade.last_checked()`.
+- The window keeps its rendered SVG icons as PNGs in the identity's cache
+  directory (`svg-icons/`), keyed by the file's path, mtime and size. Each SVG
+  had cost an `rsvg-convert` run at every start: building the rows of the
+  55-row tools installer took 1.25 s and takes 0.44 s.
 
 ### Fixed
 - Without gsettings, the icon theme lookup took the first `Theme=` line of
@@ -32,6 +36,13 @@ Stability for what counts as the public surface.
   width did not count it, so long names lost their pills and domain. The
   window now grows until the longest name line fits, by at most 500 px of
   text width.
+- Without `rsvg-convert` every SVG icon showed as `[?]`: the missing program
+  raised before cairosvg or ImageMagick were tried. A missing converter now
+  falls through to the next, and when none works the installer says once on
+  stderr what to install.
+- The icon lookup now also searches the `status`, `preferences`, `applets`,
+  `emblems`, `emotes` and `animations` directories of a theme, so icons such
+  as Breeze's `weather-clear-night` and `dialog-warning` are found.
 
 ## [1.6.0] - 2026-10-17
 

@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import functools
+import hashlib
+import io
 import os
 import subprocess
-from typing import Dict, List, Optional
+import sys
+from typing import Dict, List, Optional, Tuple
 
 from . import state
 
@@ -253,6 +256,12 @@ def _get_current_icon_theme() -> str:
     return "hicolor"  # Fallback
 
 
+# The context directories a theme sorts its icons into: the freedesktop ones,
+# plus Breeze's applets and preferences (weather-clear-night is in applets).
+ICON_CATEGORIES = ("apps", "categories", "mimetypes", "actions", "places", "devices",
+                   "status", "preferences", "applets", "emblems", "emotes", "animations")
+
+
 @functools.lru_cache(maxsize=None)
 def _is_icon_dir(path: str) -> bool:
     """os.path.isdir, remembered: most size/category directories a lookup tries
@@ -313,7 +322,7 @@ def find_icon_path(icon_name: str, size: int = 32) -> Optional[str]:
 
         # Try size-specific directories
         for sz in sizes:
-            for category in ["apps", "categories", "mimetypes", "actions", "places", "devices"]:
+            for category in ICON_CATEGORIES:
                 # Standard freedesktop structure: theme/size/category/name.ext
                 sized_dir = os.path.join(icon_dir, f"{sz}x{sz}", category)
                 # Some themes use: theme/category/size/name.ext
@@ -332,7 +341,7 @@ def find_icon_path(icon_name: str, size: int = 32) -> Optional[str]:
                             return path
 
         # Try scalable SVGs last (they're harder to load)
-        for category in ["apps", "categories", "mimetypes", "actions", "places", "devices"]:
+        for category in ICON_CATEGORIES:
             path = os.path.join(icon_dir, "scalable", category, f"{icon_name}.svg")
             if os.path.exists(path):
                 return path
@@ -344,6 +353,94 @@ def find_icon_path(icon_name: str, size: int = 32) -> Optional[str]:
                 return path
 
     return None
+
+
+def _render_svg(path: str, size: int) -> Tuple[Optional[bytes], str]:
+    """An SVG file as size x size PNG bytes, and the program that rendered it.
+
+    rsvg-convert renders best; cairosvg comes next, and ImageMagick last,
+    since its colours can be off. A missing program falls through to the next.
+    (None, "") when none works.
+    """
+    global _svg_hint_shown
+    png = _run_png(["rsvg-convert", "-w", str(size), "-h", str(size), path])
+    if png is not None:
+        return png, "rsvg-convert"
+    try:
+        import cairosvg
+        return cairosvg.svg2png(url=path, output_width=size, output_height=size), "cairosvg"
+    except Exception:
+        pass
+    png = _run_png(["convert", "-background", "none", "-resize", f"{size}x{size}",
+                    path, "png:-"])
+    if png is not None:
+        return png, "convert"
+    if not _svg_hint_shown:
+        _svg_hint_shown = True
+        print("[installer] SVG icons need rsvg-convert (Debian/Ubuntu: librsvg2-bin), "
+              "cairosvg or ImageMagick; without one they show as [?].", file=sys.stderr)
+    return None, ""
+
+
+_svg_hint_shown = False
+
+
+def _rasterize_svg(path: str, size: int) -> Optional[Image.Image]:
+    """An SVG file as a size x size image, or None."""
+    png, _ = _render_svg(path, size)
+    return Image.open(io.BytesIO(png)) if png is not None else None
+
+
+def _run_png(cmd: List[str]) -> Optional[bytes]:
+    """The PNG a converter writes to stdout, or None when it fails or is missing."""
+    try:
+        result = subprocess.run(cmd, capture_output=True, timeout=5)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return result.stdout if result.returncode == 0 and result.stdout else None
+
+
+# Each SVG costs an rsvg-convert process, about 20 ms; the window's rows took
+# 0.6 s for 29 of them. The PNG is kept in the identity's cache directory under
+# the file's path, mtime and size, so a theme update renders it again.
+# ImageMagick's output is not kept, so installing rsvg-convert later takes effect.
+SVG_CACHE_DIR = "svg-icons"
+
+
+def _svg_cache_file(path: str, size: int) -> Optional[str]:
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = hashlib.sha256(f"{path}\0{st.st_mtime_ns}\0{st.st_size}\0{size}".encode())
+    return os.path.join(state.IDENTITY.cache_path, SVG_CACHE_DIR, key.hexdigest()[:32] + ".png")
+
+
+def _cached_svg(path: str, size: int) -> Optional[Image.Image]:
+    """_rasterize_svg, through the PNG cache on disk."""
+    cached = _svg_cache_file(path, size)
+    if cached is not None:
+        try:
+            with Image.open(cached) as img:
+                return img.convert("RGBA")
+        except (OSError, ValueError):
+            pass
+    png, renderer = _render_svg(path, size)
+    if png is None:
+        return None
+    if cached is not None and renderer != "convert":
+        tmp = f"{cached}.{os.getpid()}.tmp"
+        try:
+            os.makedirs(os.path.dirname(cached), exist_ok=True)
+            with open(tmp, "wb") as fh:
+                fh.write(png)
+            os.replace(tmp, cached)
+        except OSError:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+    return Image.open(io.BytesIO(png))
 
 
 def load_icon_image(icon_name: str, size: int = 24) -> Optional[ImageTk.PhotoImage]:
@@ -362,31 +459,9 @@ def load_icon_image(icon_name: str, size: int = 24) -> Optional[ImageTk.PhotoIma
 
     try:
         if path.endswith(".svg"):
-            # Convert SVG to PNG using rsvg-convert (best quality) or fallbacks
-            import io
-
-            # Try rsvg-convert first (proper SVG rendering with correct colors)
-            result = subprocess.run(
-                ["rsvg-convert", "-w", str(size), "-h", str(size), path],
-                capture_output=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout:
-                img = Image.open(io.BytesIO(result.stdout))
-            else:
-                # Fallback: try cairosvg
-                try:
-                    import cairosvg
-                    png_data = cairosvg.svg2png(url=path, output_width=size, output_height=size)
-                    img = Image.open(io.BytesIO(png_data))
-                except (ImportError, Exception):
-                    # Last resort: ImageMagick (may have color issues)
-                    result = subprocess.run(
-                        ["convert", "-background", "none", "-resize", f"{size}x{size}", path, "png:-"],
-                        capture_output=True, timeout=5
-                    )
-                    if result.returncode != 0:
-                        return None
-                    img = Image.open(io.BytesIO(result.stdout))
+            img = _cached_svg(path, size)
+            if img is None:
+                return None
         else:
             img = Image.open(path)
             img = img.resize((size, size), Image.Resampling.LANCZOS)
@@ -416,27 +491,10 @@ def load_pil_image(path: str, size: int) -> Optional[Image.Image]:
 
     try:
         if path.endswith(".svg"):
-            import io
-            result = subprocess.run(
-                ["rsvg-convert", "-w", str(size), "-h", str(size), path],
-                capture_output=True, timeout=5
-            )
-            if result.returncode == 0 and result.stdout:
-                img = Image.open(io.BytesIO(result.stdout))
-            else:
-                try:
-                    import cairosvg
-                    png_data = cairosvg.svg2png(url=path, output_width=size, output_height=size)
-                    img = Image.open(io.BytesIO(png_data))
-                except (ImportError, Exception):
-                    result = subprocess.run(
-                        ["convert", "-background", "none", "-resize", f"{size}x{size}", path, "png:-"],
-                        capture_output=True, timeout=5
-                    )
-                    if result.returncode != 0:
-                        _pil_image_cache[key] = None
-                        return None
-                    img = Image.open(io.BytesIO(result.stdout))
+            img = _rasterize_svg(path, size)
+            if img is None:
+                _pil_image_cache[key] = None
+                return None
         else:
             img = Image.open(path)
             img = img.resize((size, size), Image.Resampling.LANCZOS)
