@@ -11,6 +11,10 @@ Stability for what counts as the public surface.
 - Without gsettings, the icon theme lookup took the first `Theme=` line of
   KDE's `kdeglobals`, which can be the sound theme (`[Sounds]`). It now reads
   only the `[Icons]` group.
+- The window's right-hand columns could be cut off at startup when the tool
+  table was wider than the window. The table kept the width it was laid out
+  at while the window was hidden. It now stays out of the window until the
+  window is sized, which also saves laying it out and drawing it twice.
 
 ## [1.6.0] - 2026-10-17
 

@@ -425,8 +425,15 @@ class InstallerApp:
         in progress, which changes that width and fires them again: the first
         pass took 14 s for 50 rows that way. Once the window is shown they set
         the exact wrap.
+
+        The table's canvas item is hidden for both passes. Its frame still
+        reports the size it asks for, but Tk does not lay it out or draw it
+        while the window is hidden, and it first appears at the canvas width.
+        Mapped during the passes, it could keep a wider width and cut off the
+        right-hand columns.
         """
         self._wrap_held = True
+        self.canvas.itemconfigure(self.canvas_window, state="hidden")
         self.root.update_idletasks()
         mon_x, mon_y, mon_width, mon_height = self._get_primary_monitor_geometry()
         avail_w, avail_h = int(mon_width * 0.9), int(mon_height * 0.9)
@@ -451,6 +458,7 @@ class InstallerApp:
         fixed_h = self.root.winfo_reqheight() - self.outer_frame.winfo_reqheight()
         content_h = fixed_h + self.scrollable_frame.winfo_reqheight()
         window_height = min(content_h, avail_h)
+        self.canvas.itemconfigure(self.canvas_window, state="normal")
         if content_h > avail_h:
             self.scrollbar.grid(row=0, column=1, sticky="ns")
         else:
