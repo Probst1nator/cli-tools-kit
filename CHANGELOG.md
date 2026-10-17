@@ -19,6 +19,10 @@ Stability for what counts as the public surface.
   table was wider than the window. The table kept the width it was laid out
   at while the window was hidden. It now stays out of the window until the
   window is sized, which also saves laying it out and drawing it twice.
+- A tool's name line (name, tag pills, domain) cannot wrap, and the window's
+  width did not count it, so long names lost their pills and domain. The
+  window now grows until the longest name line fits, by at most 500 px of
+  text width.
 
 ## [1.6.0] - 2026-10-17
 

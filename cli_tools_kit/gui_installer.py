@@ -442,13 +442,20 @@ class InstallerApp:
         # sits in a canvas and is not part of it. The table's own request is no
         # use either: until the window is drawn every description asks for one
         # long line. So the table counts with its fixed columns plus room for
-        # the tool names.
+        # the tool names. A name line (name, tag pills, domain) cannot wrap:
+        # the window grows until the longest one fits, by at most 500 px of
+        # text width, and beyond that the name is cut.
         scale = max(1.0, float(self.root.tk.call("tk", "scaling")) / (96 / 72))
         scrollbar_w = self.scrollbar.winfo_reqwidth()
         fixed_cols = sum(self._col_widths.values()) + len(RIGHT_COLS)
-        overhead = 40 + scrollbar_w + sum(TABLE_PADX) + fixed_cols + 70   # padding, checkbox
+        table_w = 40 + scrollbar_w + sum(TABLE_PADX) + 2 + fixed_cols   # 2: row border
+        overhead = table_w + 70   # padding, checkbox
+        names_w = max((table_w + row.winfo_reqwidth() - info.winfo_reqwidth()
+                       + line.winfo_reqwidth() for row, info, line in self._name_rows),
+                      default=0)
         rows_w = self.root.winfo_reqwidth()
-        window_width = min(max(rows_w, overhead + round(300 * scale)), avail_w)
+        window_width = min(max(rows_w, overhead + round(300 * scale),
+                               min(names_w, overhead + round(500 * scale))), avail_w)
 
         # Wrap the descriptions for that width before measuring the height.
         for label in self._desc_labels:
@@ -976,6 +983,7 @@ class InstallerApp:
             categories[group_label] = discovery.group_tools(tools_by_group[group_label])
 
         self._desc_labels: List[ttk.Label] = []  # wrapped to the width in _position_window
+        self._name_rows: list = []  # (row, info frame, name line), measured in _position_window
         self.expand_vars: Dict[str, tk.BooleanVar] = {}  # Track expanded state
         self.children_frames: Dict[str, ttk.Frame] = {}  # Track child frames for show/hide
 
@@ -2800,6 +2808,23 @@ class InstallerApp:
             lbl.pack(side="left", padx=(8, 0))
             self.tk_widgets.append(lbl)
 
+    def _render_name_line(self, row: ttk.Frame, info_frame: ttk.Frame, name: str,
+                          tags, domain: str = "") -> None:
+        """A row's first line: the name, its tag pills and the dim domain.
+
+        The line cannot wrap. _position_window widens the window for the
+        longest one; in a narrower window the domain is cut first, then the
+        pills, and the name last.
+        """
+        name_row = ttk.Frame(info_frame, style="Card.TFrame")
+        name_row.pack(anchor="w", fill="x")
+        ttk.Label(name_row, text=name, style="CardToolName.TLabel").pack(side="left")
+        self._render_tag_pills(name_row, tags)
+        if domain:
+            ttk.Label(name_row, text=f"· {domain}", style="CardMuted.TLabel").pack(
+                side="left", padx=(8, 0))
+        self._name_rows.append((row, info_frame, name_row))
+
     def _render_tool_row(self, tool: discovery.ToolEntry, parent_frame: ttk.Frame, indent: int = 0) -> None:
         """Render a single tool row of the tools table. *indent* adds extra
         left padding inside the row (child rows of a group) — the row itself
@@ -2906,14 +2931,8 @@ class InstallerApp:
                 autostart_cb = ttk.Checkbutton(autostart_frame, variable=autostart_var, style="Card.TCheckbutton")
                 autostart_cb.pack(expand=True)
 
-        # Name row with tag badges
-        name_row = ttk.Frame(info_frame, style="Card.TFrame")
-        name_row.pack(anchor="w", fill="x")
-        ttk.Label(name_row, text=tool.name, style="CardToolName.TLabel").pack(side="left")
-        self._render_tag_pills(name_row, tool.tags)
-        # Optional domain distinguisher (e.g. "youtube") — dim, after the tags.
-        if tool.domain:
-            ttk.Label(name_row, text=f"· {tool.domain}", style="CardMuted.TLabel").pack(side="left", padx=(8, 0))
+        # Name row with tag badges and the optional domain (e.g. "youtube")
+        self._render_name_line(tool_row, info_frame, tool.name, tool.tags, tool.domain)
 
         # Description with alias hint and usage count
         desc_text = self._format_desc_with_alias(tool)
@@ -3060,10 +3079,7 @@ class InstallerApp:
                 autostart_cb = ttk.Checkbutton(autostart_frame, variable=autostart_var, style="Card.TCheckbutton")
                 autostart_cb.pack(expand=True)
 
-        name_row = ttk.Frame(info_frame, style="Card.TFrame")
-        name_row.pack(anchor="w", fill="x")
-        ttk.Label(name_row, text=parent.name, style="CardToolName.TLabel").pack(side="left")
-        self._render_tag_pills(name_row, parent.tags)
+        self._render_name_line(parent_row, info_frame, parent.name, parent.tags)
 
         # Description with alias hint
         desc_text = self._format_desc_with_alias(parent)
