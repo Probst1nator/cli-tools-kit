@@ -53,6 +53,11 @@ Stability for what counts as the public surface.
 - A summary with errors ("Done: …, 2 errors") was logged with a `warning` tag
   that had no colour, so it showed as plain text. It now shows in the
   theme's warning colour.
+- The window took about 0.5 s of its start to find the tool icons: every icon
+  ran `gsettings` for the icon theme and tried up to 2,600 file paths, most of
+  them in directories that do not exist. The theme is now read once per
+  process and missing directories are remembered, which brings it to under
+  0.1 s for 36 icons. The lookup order and its results are unchanged.
 
 ## [1.5.1] - 2026-10-15
 

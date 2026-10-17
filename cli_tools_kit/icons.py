@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import os
 import subprocess
 from typing import Dict, List, Optional
@@ -218,6 +219,9 @@ def render_emoji_icon(emoji_char: str, output_path: str, size: int = 128) -> boo
 
 # ================= ICON UTILITIES =================
 
+# Read once per process: the window looks up one icon per row, and a gsettings
+# call per icon cost 0.3 s of a 3 s start for 36 icons.
+@functools.lru_cache(maxsize=1)
 def _get_current_icon_theme() -> str:
     """Get current icon theme from gsettings or kdeglobals."""
     # Try gsettings (GNOME)
@@ -243,6 +247,13 @@ def _get_current_icon_theme() -> str:
             pass
 
     return "hicolor"  # Fallback
+
+
+@functools.lru_cache(maxsize=None)
+def _is_icon_dir(path: str) -> bool:
+    """os.path.isdir, remembered: most size/category directories a lookup tries
+    do not exist, and every icon would otherwise try them all again."""
+    return os.path.isdir(path)
 
 
 def find_icon_path(icon_name: str, size: int = 32) -> Optional[str]:
@@ -292,15 +303,22 @@ def find_icon_path(icon_name: str, size: int = 32) -> Optional[str]:
         # Try size-specific directories
         for sz in sizes:
             for category in ["apps", "categories", "mimetypes", "actions", "places", "devices"]:
+                # Standard freedesktop structure: theme/size/category/name.ext
+                sized_dir = os.path.join(icon_dir, f"{sz}x{sz}", category)
+                # Some themes use: theme/category/size/name.ext
+                category_dir = os.path.join(icon_dir, category, sz)
+                has_sized, has_category = _is_icon_dir(sized_dir), _is_icon_dir(category_dir)
+                if not (has_sized or has_category):
+                    continue
                 for ext in extensions:
-                    # Standard freedesktop structure: theme/size/category/name.ext
-                    path = os.path.join(icon_dir, f"{sz}x{sz}", category, f"{icon_name}{ext}")
-                    if os.path.exists(path):
-                        return path
-                    # Some themes use: theme/category/size/name.ext
-                    path = os.path.join(icon_dir, category, sz, f"{icon_name}{ext}")
-                    if os.path.exists(path):
-                        return path
+                    if has_sized:
+                        path = os.path.join(sized_dir, f"{icon_name}{ext}")
+                        if os.path.exists(path):
+                            return path
+                    if has_category:
+                        path = os.path.join(category_dir, f"{icon_name}{ext}")
+                        if os.path.exists(path):
+                            return path
 
         # Try scalable SVGs last (they're harder to load)
         for category in ["apps", "categories", "mimetypes", "actions", "places", "devices"]:
