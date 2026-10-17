@@ -27,9 +27,13 @@ The script MUST:
 The installer keeps each answer and runs the probe again only when a file in
 the script's directory changed, or the installed copy
 (`~/.claude/skills/<skill_name>/`) of a skill the answer names, or the kit
-version or the Python interpreter. So the answer should depend on nothing
-else: no clock, no environment variable, no file elsewhere. An answer that
-does goes stale until `--refresh`, which probes every tool again.
+version or the Python interpreter. Directories named `data`, `logs`, `cache`,
+`.venv`, `venv`, `node_modules`, `.git`, `__pycache__`, `.mypy_cache` or
+`.pytest_cache` count only by whether
+they exist, not by what is in them: keep the state the tool writes while it
+runs there. So the answer should depend on nothing else: no clock, no
+environment variable, no file elsewhere. An answer that does goes stale until
+`--refresh`, which probes every tool again.
 
 ## Metadata schema
 

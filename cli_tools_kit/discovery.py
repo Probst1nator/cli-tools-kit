@@ -13,6 +13,7 @@ from typing import Dict, List, NamedTuple, Optional, Tuple
 
 from . import host
 from . import plugins
+from . import autostart_gate
 from . import startup_timing
 from . import state
 from .autostart_gate import KNOWN_CONDITIONS
@@ -169,16 +170,21 @@ def get_metadata_native(file_path: str, category: str) -> List[ToolEntry]:
 # Probing every tool with --advertise starts one Python process per tool, which
 # took 0.45 s of every start on a 41-tool tree, 16 at a time (2026-10-17). A
 # tool's answer changes when its files do, so discover_tools keeps each answer
-# with a fingerprint: the kit version, the interpreter, every file below the
-# tool's directory (minus virtualenvs and caches) and the installed copy of
-# each skill it names, because skill_status is computed against that copy. Any
-# changed mtime or size means a new probe. Code a tool imports from outside its
-# own directory is not covered; --refresh probes everything again. A directory
-# of more than _FINGERPRINT_MAX_FILES files is probed every time.
+# with a fingerprint: the kit version and the modules that parse the answer,
+# the interpreter, every file below the tool's directory and the installed copy
+# of each skill it names, because skill_status is computed against that copy.
+# Any changed mtime or size means a new probe. Of the directories in
+# _FINGERPRINT_SKIP only the existence counts: virtualenvs and caches, and the
+# data/, logs/ and cache/ where tools keep the state they write while they run,
+# which would otherwise send a tool that ran since the last start through its
+# probe again. A tool that offers its MCP server once mcp_server/.venv exists
+# still gets probed when that directory appears. Code a tool imports from
+# outside its own directory is not covered; --refresh probes everything again.
+# A directory of more than _FINGERPRINT_MAX_FILES files is probed every time.
 
 ADVERTISE_CACHE_NAME = "advertise-cache.json"
 _FINGERPRINT_SKIP = frozenset({".venv", "venv", "__pycache__", ".git", "node_modules",
-                               ".mypy_cache", ".pytest_cache"})
+                               ".mypy_cache", ".pytest_cache", "data", "logs", "cache"})
 _FINGERPRINT_MAX_FILES = 5000
 
 
@@ -189,8 +195,9 @@ def _advertise_cache_file() -> str:
 def _tree_signature(path: str, limit: Optional[int] = None) -> Optional[List[list]]:
     """[relative path, mtime_ns, size] of every file below *path*, sorted.
 
-    None when there are more than *limit* files: stat-ing them would cost
-    more than the probe it saves.
+    A directory in _FINGERPRINT_SKIP appears as its path with a trailing
+    slash and no contents. None when there are more than *limit* files:
+    stat-ing them would cost more than the probe it saves.
     """
     sig = []
     pending = [(path, "")]
@@ -204,7 +211,9 @@ def _tree_signature(path: str, limit: Optional[int] = None) -> Optional[List[lis
         for entry in entries:
             try:
                 if entry.is_dir(follow_symlinks=False):
-                    if entry.name not in _FINGERPRINT_SKIP:
+                    if entry.name in _FINGERPRINT_SKIP:
+                        sig.append([prefix + entry.name + "/", 0, 0])
+                    else:
                         pending.append((entry.path, prefix + entry.name + "/"))
                     continue
                 st = entry.stat()
@@ -222,11 +231,25 @@ def _advertise_fingerprint(file_path: str, category: str, tool_sig: List[list],
     from . import __version__  # noqa: PLC0415 — the package imports this module
 
     skills = sorted({e.skill_name for e in entries if e.skill_name})
-    blob = json.dumps([__version__, sys.executable, file_path, category, tool_sig,
+    blob = json.dumps([__version__, _kit_signature(), sys.executable, file_path, category,
+                       tool_sig,
                        [[name, _tree_signature(os.path.join(
                            os.path.expanduser("~"), ".claude", "skills", name))]
                         for name in skills]])
     return hashlib.sha256(blob.encode()).hexdigest()
+
+
+def _kit_signature() -> list:
+    """ToolEntry's fields and the modules that parse an answer, for a kit
+    checkout whose __version__ stays the same across edits."""
+    sig: list = [list(ToolEntry._fields)]
+    for module in (__file__, autostart_gate.__file__):
+        try:
+            st = os.stat(module)
+        except OSError:
+            continue
+        sig.append([st.st_mtime_ns, st.st_size])
+    return sig
 
 
 def _entries_from(rows) -> Optional[List[ToolEntry]]:

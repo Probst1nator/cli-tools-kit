@@ -66,6 +66,21 @@ def test_an_edited_tool_is_probed_again(engine, fake_tree: Path, monkeypatch) ->
     assert probed == ["clitool"]
 
 
+def test_state_in_data_keeps_the_cache_but_a_new_venv_does_not(engine, fake_tree: Path,
+                                                                monkeypatch) -> None:
+    _tools(engine)
+    probed = _count_probes(monkeypatch)
+    (fake_tree / "clitool" / "data").mkdir()
+    _tools(engine)
+    (fake_tree / "clitool" / "data" / "state.json").write_text("{}", encoding="utf-8")
+    _tools(engine)
+    assert probed == ["clitool"]          # the new data/ itself, not what it holds
+
+    (fake_tree / "guitool" / ".venv" / "bin").mkdir(parents=True)
+    _tools(engine)
+    assert probed == ["clitool", "guitool"]
+
+
 def test_an_installed_skill_is_probed_again(engine, monkeypatch) -> None:
     tool = _tools(engine)["skilltool"]
     probed = _count_probes(monkeypatch)
