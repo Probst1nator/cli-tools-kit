@@ -175,6 +175,21 @@ def test_a_newer_kit_within_the_pin_is_offered(tmp_path, monkeypatch, engine_sta
         (tmp_path / "cache.json").read_text())["checked"] + 60)] == ["kit"]
 
 
+def test_last_checked_is_the_last_successful_online_check(
+        tmp_path, monkeypatch, engine_state) -> None:
+    monkeypatch.setattr(upgrade, "_cache_path", lambda: tmp_path / "cache.json")
+    monkeypatch.setattr(upgrade, "kit_blocker", lambda: None)
+    state.UPGRADE_REPOS = []
+    state.ENTRY_SCRIPT = str(tmp_path / "installer.py")
+    assert upgrade.last_checked() is None
+    monkeypatch.setattr(upgrade, "latest_kit", lambda: None)   # pip unreachable
+    upgrade.check(force=True, now=1000.0)
+    assert upgrade.last_checked() is None
+    monkeypatch.setattr(upgrade, "latest_kit", lambda: "1.0.0")
+    upgrade.check(force=True, now=2000.0)
+    assert upgrade.last_checked() == 2000.0
+
+
 class _Result:
     def __init__(self, returncode: int, stdout: str) -> None:
         self.returncode, self.stdout, self.stderr = returncode, stdout, ""

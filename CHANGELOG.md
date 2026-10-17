@@ -10,6 +10,12 @@ Stability for what counts as the public surface.
 ### Changed
 - The LLM grouping builds its tool blurbs in parallel, up to 16 `--advertise`
   runs at a time, as discovery does.
+- The window's update badge counts newer versions as well as stale shortcuts.
+  Its tooltip lists both, and when nothing is pending it says when versions
+  were last checked online and what that check leaves out. A click refreshes
+  the shortcuts and checks versions online at once, outside the once-a-day
+  limit. The upgrade strip at the top stays the place to upgrade. New
+  `upgrade.last_checked()`.
 
 ### Fixed
 - Without gsettings, the icon theme lookup took the first `Theme=` line of

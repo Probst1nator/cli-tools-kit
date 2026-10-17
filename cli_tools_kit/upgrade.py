@@ -233,6 +233,12 @@ def check(force: bool = False, now: Optional[float] = None) -> List[Item]:
     return items
 
 
+def last_checked() -> Optional[float]:
+    """When :func:`check` last reached the network successfully, or None."""
+    checked = _load_cache().get("checked")
+    return float(checked) if isinstance(checked, (int, float)) else None
+
+
 # --- the upgrade --------------------------------------------------------------------
 
 Log = Callable[..., None]   # log(message, tag="info"); tags: info, success, error, header

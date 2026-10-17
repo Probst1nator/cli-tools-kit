@@ -300,6 +300,8 @@ class InstallerApp:
         # What upgrade.check() found; the strip above the table shows it and
         # survives a theme rebuild.
         self._upgrade_items: List[upgrade.Item] = []
+        self._versions_checking = False   # an upgrade.check() thread is running
+        self._check_again: Optional[bool] = None   # a check asked for meanwhile; its force
 
         # Search/filter tracking
         self.search_var = tk.StringVar()
@@ -3191,24 +3193,27 @@ class InstallerApp:
         return items
 
     def _refresh_update_btn(self):
-        """Recompute the pending-update set and push (stale?, count) into the badge.
+        """Recompute the pending-update set and push (pending?, count) into the badge.
 
-        The visual is owned by the closure _build_update_btn installed; the itemised
-        list is cached in self._stale_cache for the hover tooltip to render.
+        The count is the stale shortcuts plus the newer versions the last upgrade
+        check found. The visual is owned by the closure _build_update_btn
+        installed; the shortcut list is cached in self._stale_cache for the hover
+        tooltip and the startup reconciliation.
         """
         fn = getattr(self, "_update_state_fn", None)
         if fn is None:
             return
         self._stale_cache = self._stale_items()
-        n = len(self._stale_cache)
+        n = len(self._stale_cache) + len(self._upgrade_items)
         fn(n > 0, n)
 
     def _build_update_btn(self, parent):
-        """Stale-shortcut indicator: a colour pill carrying the pending count beside
-        neutral 'updates pending' text, falling back to a muted '✓ Up to date' when
-        nothing is stale. Hovering reveals a tooltip detailing which tools drifted and
-        when, or what 'Up to date' covers; clicking anywhere runs the local shortcut
-        refresh. Greys out and ignores
+        """Update indicator: a colour pill carrying the pending count (stale
+        shortcuts plus newer versions) beside neutral 'updates pending' text,
+        falling back to a muted '✓ Up to date' when nothing is pending. Hovering
+        reveals a tooltip listing what is pending, or what 'Up to date' covers;
+        clicking anywhere runs the local shortcut refresh and checks for new
+        versions online at once. Greys out and ignores
         clicks while a bulk op is running (see _set_update_enabled). Installs the
         self._update_state_fn(stale, n) closure that _refresh_update_btn drives."""
         t = self.theme
@@ -3234,7 +3239,8 @@ class InstallerApp:
                 label.configure(text="  updates pending", fg=t["fg"])
                 rest_fg["v"] = t["fg"]
             else:
-                label.configure(text="✓ Up to date", fg=t["muted"])
+                text = "checking versions…" if self._versions_checking else "✓ Up to date"
+                label.configure(text=text, fg=t["muted"])
                 rest_fg["v"] = t["muted"]
                 self._hide_update_tip()
             label.pack(side="left")
@@ -3242,6 +3248,7 @@ class InstallerApp:
         def on_click(_e):
             if self._update_enabled:
                 self._update_all()
+                self._start_upgrade_check(force=True)
 
         def on_enter(_e):
             if not self._update_enabled:
@@ -3355,6 +3362,7 @@ class InstallerApp:
         if not anchor.winfo_exists():
             return
         items = getattr(self, "_stale_cache", None) or []
+        versions = self._upgrade_items
         self._destroy_update_tip()
         t = self.theme
         tip = tk.Toplevel(self.root)
@@ -3367,21 +3375,21 @@ class InstallerApp:
         inner = tk.Frame(tip, bg=t["log_bg"])
         inner.pack(padx=1, pady=1)
 
-        if not items:
-            tk.Label(inner, text="✓ All shortcuts up to date", bg=t["log_bg"],
+        if not items and not versions:
+            tk.Label(inner, text="✓ Up to date", bg=t["log_bg"],
                      fg=t["success"], font=("", 10, "bold"), anchor="w",
                      justify="left").pack(fill="x", padx=10, pady=(8, 5))
-            tk.Label(inner, text="Every installed tool's shortcut or alias matches what the "
-                                 "tool advertises, and no shortcut points at a removed tool.\n"
-                                 "This is a local check. New versions show in the "
-                                 "'Upgrade available' bar at the top.",
+            tk.Label(inner, text="Shortcuts: every installed tool's shortcut or alias matches "
+                                 "what the tool advertises, and no shortcut points at a "
+                                 "removed tool.\n"
+                                 f"Versions: {self._versions_status()}",
                      bg=t["log_bg"], fg=t["log_fg"], font=("", 9), anchor="w",
                      justify="left", wraplength=340).pack(fill="x", padx=12, pady=(0, 4))
-            tk.Label(inner, text="click to check again", bg=t["log_bg"],
+            tk.Label(inner, text="click to check again (versions go online)", bg=t["log_bg"],
                      fg=t["accent"], font=("", 8, "italic"), anchor="w").pack(
                          fill="x", padx=10, pady=(2, 8))
         else:
-            self._fill_stale_tip(inner, items)
+            self._fill_stale_tip(inner, items, versions)
 
         tip.update_idletasks()
         x = anchor.winfo_rootx()
@@ -3394,28 +3402,52 @@ class InstallerApp:
         tip.wm_geometry(f"+{x}+{y}")
         self._update_tip = tip
 
-    def _fill_stale_tip(self, inner, items):
-        """The badge tooltip's body when updates are pending: one line per item."""
+    def _versions_status(self) -> str:
+        """The tooltip's line on new versions when none is pending."""
+        if self._versions_checking:
+            return "checking online now…"
+        import datetime
+        last = upgrade.last_checked()
+        when = (f"Last checked online {self._since_str(datetime.datetime.fromtimestamp(last))}."
+                if last else "Not checked online yet.")
+        blocker = upgrade.kit_blocker()
+        text = ("nothing newer for the installer and the tool repos it cloned." if blocker
+                else "nothing newer for the installer, the tool repos it cloned and "
+                     "cli-tools-kit.") + f" {when}"
+        if blocker:
+            text += f" The kit is not checked: {blocker}."
+        return text + " Checkouts pinned by path are not checked."
+
+    def _fill_stale_tip(self, inner, items, versions=()):
+        """The badge tooltip's body when updates are pending: one line per item,
+        stale shortcuts first, then newer versions."""
         t = self.theme
-        n = len(items)
-        tk.Label(inner, text=f"⚠ {n} shortcut update{'s' if n != 1 else ''} pending",
+        n = len(items) + len(versions)
+        tk.Label(inner, text=f"⚠ {n} update{'s' if n != 1 else ''} pending",
                  bg=t["log_bg"], fg=t["category"], font=("", 10, "bold"),
                  anchor="w", justify="left").pack(fill="x", padx=10, pady=(8, 5))
 
-        MAX = 12
-        for it in items[:MAX]:
+        lines = []
+        for it in items:
             since = it.get("since")
             ago = self._since_str(since) if since else "since unknown"
-            tk.Label(inner, text=f"•  {it['name']}", bg=t["log_bg"], fg=t["log_fg"],
+            lines.append((it["name"], f"{it['detail']}   ·   {ago}"))
+        for item in versions:
+            change = (f"new version {item.detail}" if item.kind == "kit"
+                      else f"{item.detail} behind its remote")
+            lines.append((item.name, f"{change}   ·   upgrade from the bar at the top"))
+        MAX = 12
+        for name, detail in lines[:MAX]:
+            tk.Label(inner, text=f"•  {name}", bg=t["log_bg"], fg=t["log_fg"],
                      font=("", 9, "bold"), anchor="w", justify="left").pack(fill="x", padx=12)
-            tk.Label(inner, text=f"{it['detail']}   ·   {ago}", bg=t["log_bg"],
+            tk.Label(inner, text=detail, bg=t["log_bg"],
                      fg=t["muted"], font=("", 8), anchor="w",
                      justify="left").pack(fill="x", padx=24, pady=(0, 4))
         if n > MAX:
             tk.Label(inner, text=f"…and {n - MAX} more", bg=t["log_bg"], fg=t["muted"],
                      font=("", 8, "italic"), anchor="w").pack(fill="x", padx=12, pady=(0, 4))
-        tk.Label(inner, text="click the badge to refresh all shortcuts", bg=t["log_bg"],
-                 fg=t["accent"], font=("", 8, "italic"), anchor="w").pack(
+        tk.Label(inner, text="click to refresh shortcuts and check versions online",
+                 bg=t["log_bg"], fg=t["accent"], font=("", 8, "italic"), anchor="w").pack(
                      fill="x", padx=10, pady=(2, 8))
 
     def _attach_tooltip(self, widget, text: str, delay: int = 500):
@@ -4135,18 +4167,34 @@ class InstallerApp:
 
     # --- upgrades -----------------------------------------------------------------
 
-    def _start_upgrade_check(self):
-        """Run upgrade.check() on a thread and show what it finds in the strip."""
+    def _start_upgrade_check(self, force: bool = False):
+        """Run upgrade.check() on a thread and show what it finds in the strip
+        and the badge. ``force`` goes online even when today's check is done.
+
+        One check runs at a time. A call during a check (a click, or the end of
+        an upgrade) runs once that check ends, and the older result is dropped,
+        since it may predate the pull."""
+        if self._versions_checking:
+            self._check_again = bool(self._check_again) or force
+            return
+        self._versions_checking = True
+        self._refresh_update_badge()
         results: queue.Queue = queue.Queue()
 
         def work():
             try:
-                results.put(upgrade.check())
+                results.put(upgrade.check(force=force))
             except Exception as exc:  # a failed check must not take the window down
                 results.put(exc)
 
         threading.Thread(target=work, daemon=True).start()
         self.root.after(200, lambda: self._poll_upgrade_check(results))
+
+    def _refresh_update_badge(self):
+        """_refresh_update_btn, unless a bulk op has the badge greyed out; the
+        op's end refreshes it."""
+        if getattr(self, "_update_enabled", False):
+            self._refresh_update_btn()
 
     def _poll_upgrade_check(self, results):
         try:
@@ -4154,12 +4202,19 @@ class InstallerApp:
         except queue.Empty:
             self.root.after(200, lambda: self._poll_upgrade_check(results))
             return
+        self._versions_checking = False
+        if self._check_again is not None:
+            force, self._check_again = self._check_again, None
+            self._start_upgrade_check(force=force)
+            return
         if isinstance(found, Exception):
             self._log(f"Upgrade check failed: {found}", "error")
+            self._refresh_update_badge()
             return
         was_shown = bool(self._upgrade_items)
         self._upgrade_items = list(found)
         self._render_upgrade_bar()
+        self._refresh_update_badge()
         if self._upgrade_items and not was_shown:
             # The window was sized without the strip; make room for it rather
             # than take its height from the table.
