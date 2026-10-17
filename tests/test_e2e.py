@@ -80,10 +80,13 @@ def test_list_shows_the_tree(installer) -> None:
 
 
 def test_apply_all_installs_every_tool_and_its_skill(installer, sandbox_home: Path) -> None:
+    assert "Skill skilltool: not installed" in installer("--list").stdout
+
     result = installer("--apply", "all")
     assert result.returncode == 0, result.stdout + result.stderr
     assert _installed(installer) == {"clitool", "guitool", "crontool", "skilltool"}
     assert (sandbox_home / ".claude" / "skills" / "skilltool" / "SKILL.md").exists()
+    assert re.search(r"Skill skilltool: claude\b", installer("--list").stdout)
 
     again = installer("--apply", "all")
     assert again.returncode == 0

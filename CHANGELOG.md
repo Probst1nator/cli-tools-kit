@@ -27,6 +27,9 @@ Stability for what counts as the public surface.
   `~/.claude/skills`, so a skill there counts as installed for it; otherwise
   it gets its own copy under `~/.config/opencode/skills`. `SkillTarget` has a
   new optional `available` field.
+- `--list` shows the skill of every tool that advertises `skill_name`: the
+  keys of the skill targets that have it (`claude`, `opencode`, a wrapper's
+  own), "update available" when one is stale, or "not installed".
 
 ### Changed
 - The window's Skill column now uses the built-in Claude Code and opencode

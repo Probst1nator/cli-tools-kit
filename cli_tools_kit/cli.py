@@ -466,6 +466,21 @@ def cli_check() -> int:
     return 0
 
 
+def _skill_state(tool: discovery.ToolEntry, targets: List) -> str:
+    """Where ``--list`` reports a tool's skill: the target keys that have it, or "not installed"."""
+    have, stale = [], False
+    for target in targets:
+        try:  # a broken harness must not take the listing down
+            if target.installed(tool):
+                have.append(target.key)
+                stale = stale or target.stale(tool)
+        except Exception:
+            continue
+    if not have:
+        return "not installed"
+    return ", ".join(have) + (" (update available)" if stale else "")
+
+
 def main():
     startup_timing.to_main()
     host.harden_stdio()
@@ -569,8 +584,9 @@ def main():
                                               mcp_targets=state.MCP_TARGETS))
 
     if args.list:
-        from . import mcp_servers
+        from . import mcp_servers, tui_installer
         harnesses = mcp_servers.present()
+        skill_targets = tui_installer.present(tui_installer.skill_targets())
         print(f"\nDiscovered {len(tools)} tools:\n" + "="*60)
         for t in tools:
             installed = install.is_installed(t)
@@ -594,8 +610,10 @@ def main():
                 have = mcp_servers.registered_with(t.mcp_name, harnesses)
                 mcp_info = (f"  MCP {t.mcp_name}: " + ", ".join(h.label for h in have)
                             if have else "")
+            skill_info = f"  Skill {t.skill_name}: {_skill_state(t, skill_targets)}" \
+                if t.skill_name else ""
             print(f" [{status}] {tags_str:<12} {t.category:<12} | {t.name:<25}{alias_info}"
-                  f"{mcp_info}")
+                  f"{mcp_info}{skill_info}")
         return
 
     from . import gui_installer, tui_installer

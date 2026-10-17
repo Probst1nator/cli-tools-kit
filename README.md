@@ -359,6 +359,10 @@ when it sets a machine up from a pasted prompt:
 `--mcp-target KEYS` (`claude`, `opencode`) also registers the named tools' MCP
 servers; without it `--apply` registers none.
 
+`--list` prints every row with its install state. A tool with a skill also
+shows which skill targets have it, by the keys `--skill-target` takes, or "not
+installed"; a tool with an MCP server shows the harnesses it is registered with.
+
 The screen calls the engine's `install_tool` / `remove_tool` / skill functions
 by name at run time, so a wrapper that replaced them (to run each tool in its
 own venv, say) is honoured there too.
