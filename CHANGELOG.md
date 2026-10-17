@@ -39,6 +39,14 @@ Stability for what counts as the public surface.
   `Plugin` was unknown and it asked for an `alias`. It now accepts
   `claude_plugin` and `claude_marketplace`, and reports a plugin without its
   marketplace.
+- The window's status line was plain blue (red on errors), which was hard to
+  read on the dark themes. It now uses the theme's success and error colours.
+- A click on "✓ Up to date" reported "Done: 1 updated" every time, because the
+  installer's own shortcut was counted whether or not it changed. It now
+  counts only when the file was created or changed, and a pass that changes
+  nothing says "Already up to date, nothing changed".
+- Hovering "✓ Up to date" shows a tooltip that says what the check covers.
+  Before, the tooltip appeared only when updates were pending.
 
 ## [1.5.1] - 2026-10-15
 

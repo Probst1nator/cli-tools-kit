@@ -91,6 +91,15 @@ def _gemini_client():
     return GeminiClient, ModelTier
 
 
+def _file_snapshot(path: str):
+    """(content, mode) of a file, or None when it does not exist or cannot be read."""
+    try:
+        with open(path, "rb") as f:
+            return f.read(), os.stat(path).st_mode
+    except OSError:
+        return None
+
+
 # ================= LAYOUT =================
 
 DEBUG_LAYOUT = False  # Set to True to color-code layout frames for debugging
@@ -3170,7 +3179,8 @@ class InstallerApp:
         """Stale-shortcut indicator: a colour pill carrying the pending count beside
         neutral 'updates pending' text, falling back to a muted '✓ Up to date' when
         nothing is stale. Hovering reveals a tooltip detailing which tools drifted and
-        when; clicking anywhere runs the local shortcut refresh. Greys out and ignores
+        when, or what 'Up to date' covers; clicking anywhere runs the local shortcut
+        refresh. Greys out and ignores
         clicks while a bulk op is running (see _set_update_enabled). Installs the
         self._update_state_fn(stale, n) closure that _refresh_update_btn drives."""
         t = self.theme
@@ -3186,10 +3196,8 @@ class InstallerApp:
         label = tk.Label(frame, bg=t["bg"], fg=t["fg"], font=("", 10))
         self._update_frame, self._update_pill, self._update_label = frame, pill, label
         rest_fg = {"v": t["fg"]}
-        stale_flag = {"v": False}
 
         def apply(stale, n):
-            stale_flag["v"] = stale
             pill.pack_forget()
             label.pack_forget()
             if stale:
@@ -3212,7 +3220,7 @@ class InstallerApp:
                 return
             label.configure(fg=t["accent"])
             self._cancel_tip_hide()
-            if stale_flag["v"] and self._update_tip is None:
+            if self._update_tip is None:
                 self._cancel_tip_show()
                 self._update_tip_show_after = self.root.after(
                     350, lambda: self._show_update_tip(frame))
@@ -3313,13 +3321,12 @@ class InstallerApp:
         self._destroy_update_tip()
 
     def _show_update_tip(self, anchor):
-        """Pop a borderless tooltip above the badge listing each pending update."""
+        """Pop a borderless tooltip above the badge listing each pending update,
+        or saying what 'Up to date' covers when nothing is pending."""
         self._update_tip_show_after = None
         if not anchor.winfo_exists():
             return
         items = getattr(self, "_stale_cache", None) or []
-        if not items:
-            return
         self._destroy_update_tip()
         t = self.theme
         tip = tk.Toplevel(self.root)
@@ -3332,6 +3339,37 @@ class InstallerApp:
         inner = tk.Frame(tip, bg=t["log_bg"])
         inner.pack(padx=1, pady=1)
 
+        n = len(items)
+        if not items:
+            tk.Label(inner, text="✓ All shortcuts up to date", bg=t["log_bg"],
+                     fg=t["success"], font=("", 10, "bold"), anchor="w",
+                     justify="left").pack(fill="x", padx=10, pady=(8, 5))
+            tk.Label(inner, text="Every installed tool's shortcut or alias matches what the "
+                                 "tool advertises, and no shortcut points at a removed tool.\n"
+                                 "This is a local check. New versions show in the "
+                                 "'Upgrade available' bar at the top.",
+                     bg=t["log_bg"], fg=t["log_fg"], font=("", 9), anchor="w",
+                     justify="left", wraplength=340).pack(fill="x", padx=12, pady=(0, 4))
+            tk.Label(inner, text="click to check again", bg=t["log_bg"],
+                     fg=t["accent"], font=("", 8, "italic"), anchor="w").pack(
+                         fill="x", padx=10, pady=(2, 8))
+        else:
+            self._fill_stale_tip(inner, items)
+
+        tip.update_idletasks()
+        x = anchor.winfo_rootx()
+        y = anchor.winfo_rooty() - tip.winfo_height() - 6
+        if y < 0:  # not enough room above — drop below instead
+            y = anchor.winfo_rooty() + anchor.winfo_height() + 6
+        sw = self.root.winfo_screenwidth()
+        if x + tip.winfo_width() > sw:
+            x = max(0, sw - tip.winfo_width() - 4)
+        tip.wm_geometry(f"+{x}+{y}")
+        self._update_tip = tip
+
+    def _fill_stale_tip(self, inner, items):
+        """The badge tooltip's body when updates are pending: one line per item."""
+        t = self.theme
         n = len(items)
         tk.Label(inner, text=f"⚠ {n} shortcut update{'s' if n != 1 else ''} pending",
                  bg=t["log_bg"], fg=t["category"], font=("", 10, "bold"),
@@ -3352,17 +3390,6 @@ class InstallerApp:
         tk.Label(inner, text="click the badge to refresh all shortcuts", bg=t["log_bg"],
                  fg=t["accent"], font=("", 8, "italic"), anchor="w").pack(
                      fill="x", padx=10, pady=(2, 8))
-
-        tip.update_idletasks()
-        x = anchor.winfo_rootx()
-        y = anchor.winfo_rooty() - tip.winfo_height() - 6
-        if y < 0:  # not enough room above — drop below instead
-            y = anchor.winfo_rooty() + anchor.winfo_height() + 6
-        sw = self.root.winfo_screenwidth()
-        if x + tip.winfo_width() > sw:
-            x = max(0, sw - tip.winfo_width() - 4)
-        tip.wm_geometry(f"+{x}+{y}")
-        self._update_tip = tip
 
     def _attach_tooltip(self, widget, text: str, delay: int = 500):
         """Attach a simple static-text hover tooltip to any widget.
@@ -4014,7 +4041,8 @@ class InstallerApp:
         if errors:
             summary += f", {errors} errors"
         self._log(summary, "warning" if errors else "success")
-        self.status_bar.config(text=summary, foreground="blue" if not errors else "red")
+        self.status_bar.config(text=summary,
+                               foreground=self.theme["error"] if errors else self.theme["success"])
 
         if result["hint_command"]:
             self._set_hint(result["hint_command"])
@@ -4265,16 +4293,19 @@ class InstallerApp:
                         errors += 1
                         log(f"  ✗ {msg}", "error")
 
-            total = 1 + len(installed_tools)  # +1 for the installer itself
-            scope = "shortcuts" if skip_deps else "tools (with dependencies)"
-            log(f"Updating {total} {scope}...", "header")
+            if installed_tools:
+                scope = "shortcuts" if skip_deps else "tools (with dependencies)"
+                log(f"Updating {len(installed_tools)} {scope}...", "header")
 
-            # Installer's own desktop file (always shortcut-only)
-            log("Updating: Tools Installer")
+            # Installer's own desktop file (always shortcut-only). The badge does
+            # not track it, so it counts as updated only when the file changed.
+            self_path = cli._self_shortcut_path()
+            before = _file_snapshot(self_path)
             success, output = cli.cli_install_self(quiet=True)
             if success:
-                updated += 1
-                log("  ✓ Tools Installer updated", "success")
+                if _file_snapshot(self_path) != before:
+                    updated += 1
+                    log("  ✓ Tools Installer shortcut updated", "success")
             else:
                 errors += 1
                 log(f"  ✗ Tools Installer failed: {output}", "error")
@@ -4350,9 +4381,15 @@ class InstallerApp:
             summary_parts.append(f"{result['removed']} orphans removed")
         if errors:
             summary_parts.append(f"{errors} errors")
-        summary = "Done: " + ", ".join(summary_parts) if summary_parts else "Done: nothing to do"
-        self._log(summary, "warning" if errors else "success")
-        self.status_bar.config(text=summary, foreground="blue" if not errors else "red")
+        t = self.theme
+        if summary_parts:
+            summary = "Done: " + ", ".join(summary_parts)
+            self._log(summary, "warning" if errors else "success")
+            self.status_bar.config(text=summary, foreground=t["error"] if errors else t["success"])
+        else:
+            summary = "Already up to date, nothing changed"
+            self._log(summary, "info")
+            self.status_bar.config(text=summary, foreground=t["fg"])
 
         if result["hint_command"]:
             self._set_hint(result["hint_command"])
