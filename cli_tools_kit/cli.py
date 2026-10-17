@@ -531,7 +531,20 @@ def main():
     args = parser.parse_args()
 
     # The measured runs are new processes with the same arguments; they tell
-    # themselves apart from this one by startup_timing.ACTIVE.
+    # themselves apart from this one by startup_timing.ACTIVE. Each of them
+    # would run an action flag again, and the text screen has no first frame
+    # to stop at, so those flags cannot go with a measurement.
+    if args.startup_time:
+        actions = [flag for flag, on in (
+            ("--install", args.install), ("--uninstall", args.uninstall),
+            ("--uninstall-all", args.uninstall_all), ("--update-all", args.update_all),
+            ("--cleanup", args.cleanup), ("--list", args.list), ("--check", args.check),
+            ("--enable-autostart-check", args.enable_autostart_check),
+            ("--disable-autostart-check", args.disable_autostart_check),
+            ("--upgrade", args.upgrade), ("--refresh", args.refresh),
+            ("--apply", args.apply), ("--tui", args.tui)) if on]
+        if actions:
+            parser.error(f"--startup-time measures the window; leave out {', '.join(actions)}")
     if args.startup_time and not startup_timing.ACTIVE:
         sys.exit(startup_timing.benchmark(args.startup_time))
 

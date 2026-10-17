@@ -109,3 +109,19 @@ def test_benchmark_fails_when_a_run_reports_nothing(capsys: pytest.CaptureFixtur
     assert startup_timing.benchmark(1, argv=[sys.executable, "-c", "pass"],
                                     out=io.StringIO()) == 1
     assert "wrote no timings" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("flag", [["--apply", "all"], ["--refresh"], ["--tui"], ["--uninstall-all"]])
+def test_startup_time_refuses_an_action_flag(flag, monkeypatch: pytest.MonkeyPatch,
+                                             capsys: pytest.CaptureFixture) -> None:
+    """Every measured run would repeat the action, so the parser stops first."""
+    from cli_tools_kit import cli
+
+    started: list = []
+    monkeypatch.setattr(startup_timing, "benchmark", lambda *a, **k: started.append(a) or 0)
+    monkeypatch.setattr(sys, "argv", ["installer.py", "--startup-time", "3", *flag])
+    with pytest.raises(SystemExit) as done:
+        cli.main()
+    assert done.value.code == 2
+    assert started == []
+    assert f"leave out {flag[0]}" in capsys.readouterr().err
