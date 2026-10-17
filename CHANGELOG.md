@@ -35,7 +35,7 @@ Stability for what counts as the public surface.
 - Skills for opencode: `tui_installer.opencode_target()`. opencode reads
   `~/.claude/skills`, so a skill there counts as installed for it; otherwise
   it gets its own copy under `~/.config/opencode/skills`, which is written
-  again on the next Apply once a file in the tool's directory changed.
+  again on the next Apply once a `.py` or `.md` file of the tool changed.
   Removing the skill fails with a message while opencode still finds it in
   `~/.claude/skills` or `~/.agents/skills`. `SkillTarget` has a new optional
   `available` field. An exception from a skill target counts as an error of
@@ -49,6 +49,8 @@ Stability for what counts as the public surface.
   targets instead of only `~/.claude/skills`, each where the host has the
   harness. A wrapper's own `skill_targets` (such as AutomatedAlchemy's
   fauclaude target) still apply on the text screen only.
+- `run(skill_targets=[])` now means no skill targets, as `mcp_targets=[]`
+  means no harnesses. Before, an empty list meant the built-in targets.
 - Discovery keeps each tool's `--advertise` answer in
   `<cache dir>/advertise-cache.json` and probes a tool again only when a file
   in its directory, the installed copy of its skill, the kit version or the

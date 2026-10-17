@@ -55,7 +55,7 @@ from dataclasses import dataclass, field
 from typing import Callable, Dict, List, NamedTuple, Optional, Set, Tuple
 
 from . import gui_installer as gi
-from . import host, mcp_servers, skills, upgrade
+from . import host, mcp_servers, skills, state, upgrade
 from .gui_installer import ToolEntry
 
 
@@ -105,13 +105,13 @@ def _opencode_shared_dirs(tool: ToolEntry) -> List[str]:
     return out
 
 
-# opencode's own copy has no tool-side freshness check, so the tool directory's
+# opencode's own copy has no tool-side freshness check, so the tool's
 # signature at copy time is kept here, per skill name.
 OPENCODE_MARKS_NAME = "opencode-skills.json"
 
 
 def _opencode_marks_file() -> str:
-    return os.path.join(gi.IDENTITY.cache_path, OPENCODE_MARKS_NAME)
+    return os.path.join(state.IDENTITY.cache_path, OPENCODE_MARKS_NAME)
 
 
 def _opencode_marks() -> Dict[str, str]:
@@ -141,11 +141,18 @@ def _opencode_mark(skill_name: str, signature: Optional[str]) -> None:
 
 
 def _tool_signature(tool: ToolEntry) -> str:
-    """A hash over the files of the tool's directory ("" for a very large one)."""
+    """A hash over the tool's .py and .md files ("" for a very large directory).
+
+    The skill comes from those; state files a tool writes next to its script
+    would otherwise mark the copy stale after every run.
+    """
     from . import discovery
     sig = discovery._tree_signature(os.path.dirname(tool.script_path),
                                     discovery._FINGERPRINT_MAX_FILES)
-    return hashlib.sha256(json.dumps(sig).encode()).hexdigest() if sig is not None else ""
+    if sig is None:
+        return ""
+    code = [entry for entry in sig if entry[0].endswith((".py", ".md"))]
+    return hashlib.sha256(json.dumps(code).encode()).hexdigest()
 
 
 def _opencode_installed(tool: ToolEntry) -> bool:
@@ -202,7 +209,7 @@ def _opencode_stale(tool: ToolEntry) -> bool:
 
     With a copy in ~/.claude/skills to compare against, it is stale when the
     two differ or the tool reports that copy stale. Without one, it is stale
-    when the tool's directory changed since the copy was made.
+    when a .py or .md file of the tool changed since the copy was made.
     """
     own = skills.read_installed_skill(tool.skill_name, os.path.dirname(_opencode_own_dir(tool)))
     if own is None:
@@ -516,9 +523,8 @@ def apply_headless(tools: List[ToolEntry], names: str, target_keys: str = "claud
         return 2
     rows = [Row(t, True, bool(t.skill_name) and bool(keys),
                 bool(t.mcp_name and t.mcp_command) and bool(mkeys)) for t in chosen]
-    # A server is added only to the targets in mkeys: without --mcp-target, to
-    # none. An outdated command is still replaced where it is registered.
-    steps = plan(rows, targets, keys, mcp_targets, mkeys)
+    # Only the targets in mkeys are touched: without --mcp-target, none.
+    steps = plan(rows, targets, keys, [t for t in mcp_targets if t.key in mkeys], mkeys)
     if not steps:
         print("Nothing to do: already installed.")
         return 0

@@ -320,7 +320,7 @@ The tool's side stays the same. cli-tools-kit has two targets built in:
   does the parent copy what `--install-skill` writes into
   `~/.config/opencode/skills/<name>/` (and removes the `~/.claude/skills` copy
   again if it was not there before). That copy is written again on the next
-  Apply once a file in the tool's directory has changed.
+  Apply once a `.py` or `.md` file in the tool's directory has changed.
 
 Contract the tool must satisfy:
 

@@ -360,7 +360,7 @@ when it sets a machine up from a pasted prompt:
 ```
 
 `--mcp-target KEYS` (`claude`, `opencode`) also registers the named tools' MCP
-servers; without it `--apply` registers none.
+servers, and touches no other harness; without it `--apply` registers none.
 
 `--list` prints every row with its install state. A tool with a skill also
 shows which skill targets have it, by the keys `--skill-target` takes, or "not

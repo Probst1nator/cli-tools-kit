@@ -340,6 +340,15 @@ def test_headless_apply_registers_only_with_named_harnesses(monkeypatch) -> None
                               mcp_targets=[target]) == 2
 
 
+def test_headless_apply_leaves_harnesses_it_was_not_given_alone(monkeypatch) -> None:
+    monkeypatch.setattr(gi, "is_installed", lambda t: True)
+    monkeypatch.setattr(gi, "needs_update", lambda t: False)
+    named, other = {}, {"esc": ["/old"]}
+    targets = [_fake_target(named)._replace(key="a"), _fake_target(other)._replace(key="b")]
+    assert tui.apply_headless([_tool()], "esc", "none", mcp_keys="a", mcp_targets=targets) == 0
+    assert named == {"esc": ARGV} and other == {"esc": ["/old"]}
+
+
 def test_gui_apply_spreads_a_server_only_from_a_box_ticked_now(monkeypatch) -> None:
     pytest.importorskip("tkinter")
     from cli_tools_kit import install
@@ -546,6 +555,8 @@ def test_opencode_own_copy_is_stale_once_the_tool_changes(skill_dirs, tmp_path: 
     tool = _tool(skill="s")._replace(script_path=str(folder / "main.py"))
     target = tui.opencode_target()
     assert target.install(tool)[0] and not (claude / "s").exists()
+    assert not target.stale(tool)
+    (folder / "state.json").write_text("{}")      # what the tool writes while it runs
     assert not target.stale(tool)
     (folder / "main.py").write_text("print(22)\n")
     assert target.stale(tool)
