@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.6.1] - 2026-10-17
+
 ### Changed
 - The grouping runs each tool's `--advertise` once per build, up to 16 at a
   time, as discovery does. Before, each tier probed again, and the capability
