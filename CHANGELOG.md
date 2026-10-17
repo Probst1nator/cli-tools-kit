@@ -7,6 +7,11 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Fixed
+- Without gsettings, the icon theme lookup took the first `Theme=` line of
+  KDE's `kdeglobals`, which can be the sound theme (`[Sounds]`). It now reads
+  only the `[Icons]` group.
+
 ## [1.6.0] - 2026-10-17
 
 ### Added

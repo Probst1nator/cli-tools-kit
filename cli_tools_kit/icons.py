@@ -235,13 +235,17 @@ def _get_current_icon_theme() -> str:
     except Exception:
         pass
 
-    # Try KDE config
+    # Try KDE config. Only the [Icons] group counts: [Sounds] has a Theme= too.
     kde_config = os.path.expanduser("~/.config/kdeglobals")
     if os.path.exists(kde_config):
         try:
+            group = ""
             with open(kde_config) as f:
                 for line in f:
-                    if line.startswith("Theme="):
+                    line = line.strip()
+                    if line.startswith("["):
+                        group = line
+                    elif group == "[Icons]" and line.startswith("Theme="):
                         return line.split("=", 1)[1].strip()
         except Exception:
             pass
