@@ -42,10 +42,10 @@ Stability for what counts as the public surface.
   Python interpreter changed. In `data/`, `logs/`, `cache/` and the
   virtualenv and cache directories only their existence counts, so a tool
   that wrote its state there since the last start is not probed again. On a
-  41-tool tree discovery takes 0.03 s instead of 0.45 s when nothing changed,
-  plus about 0.3 s when one or more tools have to be probed again. Code a tool
-  imports from outside its own directory is not watched; `--refresh` probes
-  every tool again.
+  41-tool tree discovery takes 0.01 s instead of 0.25 s when nothing changed,
+  plus the time of one probe (0.1 to 0.3 s) when some tools have to be probed
+  again. Code a tool imports from outside its own directory is not watched;
+  `--refresh` probes every tool again.
 
 ### Fixed
 - `testing.validate_advertise` rejected the documented plugin record: the tag
@@ -63,15 +63,12 @@ Stability for what counts as the public surface.
 - A summary with errors ("Done: …, 2 errors") was logged with a `warning` tag
   that had no colour, so it showed as plain text. It now shows in the
   theme's warning colour.
-- The window took about 0.5 s of its start to find the tool icons: every icon
-  ran `gsettings` for the icon theme and tried up to 2,600 file paths, most of
-  them in directories that do not exist. The theme is now read once per
-  process and missing directories are remembered, which brings it to under
-  0.1 s for 36 icons. The lookup order and its results are unchanged.
-- Each vertical line of the tools table was a 1px frame of its own, 312 of
-  the window's 1,642 widgets with 52 rows. The cells now leave a 1px gap on a
-  border-colored row, which draws the same pixels and takes about 0.4 s off
-  the layout before the first frame.
+- The window took 0.2 to 0.5 s of its start, depending on the host's load, to
+  find the tool icons: every icon ran `gsettings` for the icon theme and tried
+  up to 2,600 file paths, most of them in directories that do not exist. The
+  theme is now read once per process and missing directories are remembered,
+  which brings it to 0.03 s for 37 icons. The lookup order and its results
+  are unchanged.
 - The tool grouping never found `GEMINI_API_KEY` in the grouped tree's `.env`.
   It looked two directories above its own module, which for an installed kit
   is `site-packages`, so it fell back to a local model or the capability
