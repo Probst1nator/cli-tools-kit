@@ -13,20 +13,31 @@ Stability for what counts as the public surface.
   phase took (imports, discovery and its `--advertise` probes, `Tk()`, row
   building with icon loading, layout, first draw). The measured runs skip the
   orphan warning, the startup auto-update and the upgrade check, so they
-  rewrite no shortcut and upgrade nothing. Module `cli_tools_kit.startup_timing`.
+  rewrite no shortcut and upgrade nothing. Action flags such as `--apply` and
+  `--refresh`, which every run would repeat, and `--tui` are refused with it.
+  Module `cli_tools_kit.startup_timing`.
 - An MCP column. A tool that advertises `mcp_name` and `mcp_command` (the argv
   that starts its stdio server) gets an MCP checkbox, and the installer
   registers that command with each agent harness on the host. Built in:
   Claude Code (`claude mcp add-json` / `remove`, user scope) and opencode
   (`opencode mcp add`; removing edits its JSONC config and keeps the
-  comments). Wrappers pass others with `run(mcp_targets=[...])`. A box that
-  starts ticked adds no new harness on Apply. `--apply` takes
+  comments, and a symlinked config stays a symlink). Wrappers pass others with
+  `run(mcp_targets=[...])`. A box that starts ticked adds no new harness on
+  Apply; unticking removes the server from every harness that has it; a box
+  that starts unticked and stays so changes nothing, also when a config could
+  not be read. The text screen follows the same rules, and its MCP target line
+  chooses where a newly ticked server is added. `--apply` takes
   `--mcp-target KEYS`; `--list` and `--uninstall-all` cover the servers.
-  Module `cli_tools_kit.mcp_servers`.
+  `testing.validate_advertise` checks that `mcp_command` holds non-empty
+  strings and absolute paths. Module `cli_tools_kit.mcp_servers`.
 - Skills for opencode: `tui_installer.opencode_target()`. opencode reads
   `~/.claude/skills`, so a skill there counts as installed for it; otherwise
-  it gets its own copy under `~/.config/opencode/skills`. `SkillTarget` has a
-  new optional `available` field.
+  it gets its own copy under `~/.config/opencode/skills`, which is written
+  again on the next Apply once a file in the tool's directory changed.
+  Removing the skill fails with a message while opencode still finds it in
+  `~/.claude/skills` or `~/.agents/skills`. `SkillTarget` has a new optional
+  `available` field. An exception from a skill target counts as an error of
+  that one step instead of ending the Apply.
 - `--list` shows the skill of every tool that advertises `skill_name`: the
   keys of the skill targets that have it (`claude`, `opencode`, a wrapper's
   own), "update available" when one is stale, or "not installed".
@@ -44,8 +55,8 @@ Stability for what counts as the public surface.
   that wrote its state there since the last start is not probed again. On a
   41-tool tree discovery takes 0.01 s instead of 0.25 s when nothing changed,
   plus the time of one probe (0.1 to 0.3 s) when some tools have to be probed
-  again. Code a tool imports from outside its own directory is not watched;
-  `--refresh` probes every tool again.
+  again. Symlinked directories are followed. Code a tool imports from outside
+  its own directory is not watched; `--refresh` probes every tool again.
 
 ### Fixed
 - `testing.validate_advertise` rejected the documented plugin record: the tag
@@ -66,14 +77,16 @@ Stability for what counts as the public surface.
 - The window took 0.2 to 0.5 s of its start, depending on the host's load, to
   find the tool icons: every icon ran `gsettings` for the icon theme and tried
   up to 2,600 file paths, most of them in directories that do not exist. The
-  theme is now read once per process and missing directories are remembered,
-  which brings it to 0.03 s for 37 icons. The lookup order and its results
-  are unchanged.
+  theme is now read once and missing directories are remembered until the
+  next Apply or theme change, which brings it to 0.03 s for 37 icons. The
+  lookup order and its results are unchanged.
 - The tool grouping never found `GEMINI_API_KEY` in the grouped tree's `.env`.
   It looked two directories above its own module, which for an installed kit
   is `site-packages`, so it fell back to a local model or the capability
   tier. `build_groups` now reads that one variable from `<root>/.env` when
-  the environment has none, and leaves the file's other variables alone.
+  the environment has none. It keeps the key inside the kit, not in
+  `os.environ`, so the tools the installer starts do not inherit it, and it
+  leaves the file's other variables alone.
 
 ## [1.5.1] - 2026-10-15
 

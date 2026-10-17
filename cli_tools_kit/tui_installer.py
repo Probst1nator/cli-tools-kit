@@ -25,9 +25,12 @@ skill visible to opencode. A wrapper replaces the list via
 ``mcp_command`` likewise registers its MCP server with the harnesses in
 :func:`mcp_servers.targets`. The screen lists the targets the host has, the
 first of each kind ticked, and the user picks which ones the Apply step writes
-to. Targets the user left unticked are not touched. A skill directory that a
-tool's own ``--install`` creates in ``~/.claude/skills`` is removed again when
-the claude target is not chosen for that tool.
+to. Skill targets the user left unticked are not touched. The MCP target line
+only chooses where a newly ticked server is added: like the window, Apply
+updates an outdated command and removes an unticked server on every harness
+that has the name. A skill directory that a tool's own ``--install`` creates
+in ``~/.claude/skills`` is removed again when the claude target is not chosen
+for that tool.
 
 Keys
 ----
@@ -38,6 +41,8 @@ Skill, ``m`` ticks MCP, ``1``..``9`` tick a target, ``a``/``n`` tick all/none,
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import queue
 import re
@@ -100,6 +105,49 @@ def _opencode_shared_dirs(tool: ToolEntry) -> List[str]:
     return out
 
 
+# opencode's own copy has no tool-side freshness check, so the tool directory's
+# signature at copy time is kept here, per skill name.
+OPENCODE_MARKS_NAME = "opencode-skills.json"
+
+
+def _opencode_marks_file() -> str:
+    return os.path.join(gi.IDENTITY.cache_path, OPENCODE_MARKS_NAME)
+
+
+def _opencode_marks() -> Dict[str, str]:
+    try:
+        with open(_opencode_marks_file(), encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _opencode_mark(skill_name: str, signature: Optional[str]) -> None:
+    """Store the signature for a copy, or forget it (None)."""
+    marks = _opencode_marks()
+    if signature is None:
+        marks.pop(skill_name, None)
+    else:
+        marks[skill_name] = signature
+    path = _opencode_marks_file()
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        with open(path + ".tmp", "w", encoding="utf-8") as fh:
+            json.dump(marks, fh)
+        os.replace(path + ".tmp", path)
+    except OSError:
+        pass   # without a mark the copy counts as stale and is written again
+
+
+def _tool_signature(tool: ToolEntry) -> str:
+    """A hash over the files of the tool's directory ("" for a very large one)."""
+    from . import discovery
+    sig = discovery._tree_signature(os.path.dirname(tool.script_path),
+                                    discovery._FINGERPRINT_MAX_FILES)
+    return hashlib.sha256(json.dumps(sig).encode()).hexdigest() if sig is not None else ""
+
+
 def _opencode_installed(tool: ToolEntry) -> bool:
     dirs = [_opencode_own_dir(tool)] + _opencode_shared_dirs(tool)
     return any(os.path.isfile(os.path.join(d, "SKILL.md")) for d in dirs)
@@ -128,6 +176,7 @@ def _opencode_install(tool: ToolEntry) -> Tuple[bool, str]:
     finally:
         if not had_claude:
             gi.uninstall_skill_for_tool(tool)
+    _opencode_mark(tool.skill_name, _tool_signature(tool))
     return True, f"copied the skill to {own}"
 
 
@@ -135,18 +184,33 @@ def _opencode_uninstall(tool: ToolEntry) -> Tuple[bool, str]:
     own = _opencode_own_dir(tool)
     if os.path.islink(own):
         os.unlink(own)
+        done = f"removed {own}"
     elif os.path.isdir(own):
         shutil.rmtree(own)
+        done = f"removed {own}"
     else:
-        return True, f"{own} is not there"
-    return True, f"removed {own}"
+        done = f"{own} is not there"
+    _opencode_mark(tool.skill_name, None)
+    for shared in _opencode_shared_dirs(tool):
+        if os.path.isfile(os.path.join(shared, "SKILL.md")):
+            return False, f"{done}, but opencode still loads the skill from {shared}"
+    return True, done
 
 
 def _opencode_stale(tool: ToolEntry) -> bool:
-    """opencode's own copy differs from the one in ~/.claude/skills."""
+    """opencode's own copy may be older than the tool's skill.
+
+    With a copy in ~/.claude/skills to compare against, it is stale when the
+    two differ or the tool reports that copy stale. Without one, it is stale
+    when the tool's directory changed since the copy was made.
+    """
     own = skills.read_installed_skill(tool.skill_name, os.path.dirname(_opencode_own_dir(tool)))
+    if own is None:
+        return False
     claude = skills.read_installed_skill(tool.skill_name, gi.CLAUDE_SKILLS_DIR)
-    return own is not None and claude is not None and own != claude
+    if claude is not None:
+        return own != claude or tool.skill_status == "stale"
+    return _opencode_marks().get(tool.skill_name) != _tool_signature(tool)
 
 
 def opencode_target() -> SkillTarget:
@@ -158,8 +222,7 @@ def opencode_target() -> SkillTarget:
         install=_opencode_install,
         uninstall=_opencode_uninstall,
         stale=_opencode_stale,
-        available=lambda: (mcp_servers._opencode_exe() is not None
-                           or mcp_servers.opencode_config_dir().is_dir()),
+        available=mcp_servers.opencode_available,
     )
 
 
@@ -170,19 +233,12 @@ def default_targets() -> List[SkillTarget]:
 def skill_targets() -> List[SkillTarget]:
     """The wrapper's ``run(skill_targets=...)``, else the built-in ones."""
     chosen = gi.SKILL_TARGETS
-    return list(chosen) if chosen else default_targets()
+    return list(chosen) if chosen is not None else default_targets()
 
 
 def present(targets: List) -> List:
     """The skill or MCP targets whose harness this host has."""
-    out = []
-    for target in targets:
-        try:
-            if target.available():
-                out.append(target)
-        except Exception:  # a broken harness must not take the screen down
-            continue
-    return out
+    return mcp_servers.present(targets)
 
 
 def prefer_tui(*, force_tui: bool = False, force_gui: bool = False,
@@ -213,6 +269,7 @@ class Row:
     install: bool
     skill: bool
     mcp: bool = False
+    mcp_was: bool = False   # the MCP box's state at the start (or after the last Apply)
 
     @property
     def has_skill(self) -> bool:
@@ -234,7 +291,8 @@ def default_rows(tools: List[ToolEntry], preselect: Optional[bool] = None,
     A Claude Code plugin row always mirrors the host: several rows can name
     one plugin, and installing one disables the others. MCP always mirrors
     the host (any of *mcp_targets*): a registered server starts with every
-    session of its harness, so nothing ticks it by default.
+    session of its harness, so nothing ticks it by default. ``mcp_was``
+    records that state for :func:`plan`.
     """
     installed = [gi.is_installed(t) for t in tools]
     if preselect is None:
@@ -247,7 +305,7 @@ def default_rows(tools: List[ToolEntry], preselect: Optional[bool] = None,
         skill = bool(tool.skill_name) and (want if preselect else skill_installed(tool))
         mcp = (bool(tool.mcp_name and tool.mcp_command)
                and bool(mcp_servers.registered_with(tool.mcp_name, mcp_targets or [])))
-        rows.append(Row(tool, want, skill, mcp))
+        rows.append(Row(tool, want, skill, mcp, mcp_was=mcp))
     return rows
 
 
@@ -260,7 +318,14 @@ class Step(NamedTuple):
 def plan(rows: List[Row], targets: List[SkillTarget], active: Set[str],
          mcp_targets: Optional[List[mcp_servers.McpTarget]] = None,
          mcp_active: Optional[Set[str]] = None) -> List[Step]:
-    """What Apply would do, in order: tools, then skills and MCP servers per active target."""
+    """What Apply would do, in order: tools, then skills per active target, then
+    MCP servers.
+
+    An MCP server is added to the active targets only when its box was ticked
+    since the start (``row.mcp_was`` false), as in the window. An outdated
+    command is replaced, and an unticked server removed, on every target that
+    has the name. A box that started unticked and still is changes nothing.
+    """
     steps: List[Step] = []
     for row in rows:
         current = gi.is_installed(row.tool)
@@ -282,20 +347,18 @@ def plan(rows: List[Row], targets: List[SkillTarget], active: Set[str],
             elif not row.skill and have:
                 steps.append(Step("skill_remove", row.tool, target))
     for row in rows:
-        if not row.has_mcp:
+        if not row.has_mcp or (row.mcp and not row.install) or not (row.mcp or row.mcp_was):
             continue
-        argv = list(row.tool.mcp_command)
+        argv = [str(a) for a in row.tool.mcp_command]
         for target in mcp_targets or []:
-            if target.key not in (mcp_active or set()):
-                continue
             try:
                 have = target.registered().get(row.tool.mcp_name)
             except Exception:  # an unreadable config is left alone
                 continue
-            if row.mcp and row.install and have != argv:
-                steps.append(Step("mcp_install", row.tool, target))
-            elif not row.mcp and have is not None:
-                steps.append(Step("mcp_remove", row.tool, target))
+            add_missing = not row.mcp_was and target.key in (mcp_active or set())
+            todo = mcp_servers.action(have, argv, row.mcp, add_missing)
+            if todo is not None:
+                steps.append(Step(f"mcp_{todo}", row.tool, target))
     return steps
 
 
@@ -352,12 +415,13 @@ def execute(steps: List[Step], log: Callable[[str], None]) -> Dict[str, object]:
             if gi.is_autostart_enabled(tool):
                 gi.disable_autostart(tool)
             ok, out = gi.remove_tool(tool)
-        elif step.kind == "skill_install" and target is not None:
-            log(f"Skill {tool.skill_name} -> {target.key}")
-            ok, out = target.install(tool)
-        elif step.kind == "skill_remove" and target is not None:
-            log(f"Skill {tool.skill_name} removed from {target.key}")
-            ok, out = target.uninstall(tool)
+        elif step.kind in ("skill_install", "skill_remove") and target is not None:
+            adding = step.kind == "skill_install"
+            log(f"Skill {tool.skill_name} {'->' if adding else 'removed from'} {target.key}")
+            try:
+                ok, out = target.install(tool) if adding else target.uninstall(tool)
+            except Exception as exc:  # e.g. a copy into a config dir that is not writable
+                ok, out = False, str(exc)
         elif step.kind in ("mcp_install", "mcp_remove") and target is not None:
             adding = step.kind == "mcp_install"
             log(f"MCP server {tool.mcp_name} {'->' if adding else 'removed from'} {target.key}")
@@ -423,7 +487,7 @@ def apply_headless(tools: List[ToolEntry], names: str, target_keys: str = "claud
     named tools and their skills without a screen, and register their MCP
     servers with the harnesses in *mcp_keys* (none by default). Tools not named
     are left as they are. Returns 0, 1 on errors, 2 on an unknown name."""
-    targets = list(targets) if targets else skill_targets()
+    targets = list(targets) if targets is not None else skill_targets()
     mcp_targets = list(mcp_targets) if mcp_targets is not None else mcp_servers.targets()
     wanted = [n.strip() for n in names.split(",") if n.strip()]
     if wanted == ["all"]:
@@ -452,7 +516,8 @@ def apply_headless(tools: List[ToolEntry], names: str, target_keys: str = "claud
         return 2
     rows = [Row(t, True, bool(t.skill_name) and bool(keys),
                 bool(t.mcp_name and t.mcp_command) and bool(mkeys)) for t in chosen]
-    # Only the targets in mkeys are touched: without --mcp-target, none.
+    # A server is added only to the targets in mkeys: without --mcp-target, to
+    # none. An outdated command is still replaced where it is registered.
     steps = plan(rows, targets, keys, mcp_targets, mkeys)
     if not steps:
         print("Nothing to do: already installed.")
@@ -496,6 +561,9 @@ class _State:
                 self.status[i] = "update" if gi.needs_update(row.tool) else "installed"
             else:
                 self.status[i] = "-"
+            if row.has_mcp:
+                row.mcp_was = bool(mcp_servers.registered_with(row.tool.mcp_name,
+                                                               self.mcp_targets))
 
 
 def _worker(steps: List[Step], events: "queue.Queue") -> None:
@@ -712,12 +780,14 @@ def run_tui(tools: List[ToolEntry], *, targets: Optional[List[SkillTarget]] = No
               "Windows does not include. Install it with: "
               "pip install windows-curses", file=sys.stderr)
         return 1
-    targets = list(targets) if targets else skill_targets()
+    targets = list(targets) if targets is not None else skill_targets()
     targets = present(targets) or targets
     mcp_targets = present(list(mcp_targets) if mcp_targets is not None else mcp_servers.targets())
-    rows = default_rows(tools, preselect, skill_installed=targets[0].installed,
+    rows = default_rows(tools, preselect,
+                        skill_installed=targets[0].installed if targets else lambda _t: False,
                         mcp_targets=mcp_targets)
-    st = _State(rows=rows, targets=targets, active={targets[0].key}, title=title,
+    st = _State(rows=rows, targets=targets, active={targets[0].key} if targets else set(),
+                title=title,
                 mcp_targets=mcp_targets,
                 mcp_active={mcp_targets[0].key} if mcp_targets else set())
     st.refresh_status()

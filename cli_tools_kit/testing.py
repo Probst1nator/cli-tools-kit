@@ -16,7 +16,9 @@ grows (README § Stability).
 from __future__ import annotations
 
 import json
+import ntpath
 import os
+import posixpath
 import subprocess
 import sys
 from typing import List, Optional
@@ -93,8 +95,16 @@ def validate_advertise(data) -> List[str]:
         if bool(entry.get("mcp_name")) != bool(entry.get("mcp_command")):
             errors.append(f"{where}: 'mcp_name' and 'mcp_command' go together")
         command = entry.get("mcp_command")
-        if isinstance(command, list) and "" in command:
-            errors.append(f"{where}: mcp_command has an empty argument")
+        if isinstance(command, list) and all(isinstance(v, str) for v in command):
+            if any(not v.strip() for v in command):
+                errors.append(f"{where}: mcp_command has an empty argument")
+            # The harness starts the server from its own working directory.
+            # Either platform's form counts: the check can run on another OS.
+            relative = [v for i, v in enumerate(command)
+                        if (i == 0 or v.endswith(".py")) and v.strip()
+                        and not (posixpath.isabs(v) or ntpath.isabs(v))]
+            if relative:
+                errors.append(f"{where}: mcp_command needs absolute paths, got {relative}")
         status = entry.get("skill_status")
         if isinstance(status, str) and status and status not in SKILL_STATUSES:
             errors.append(f"{where}: skill_status must be one of {sorted(SKILL_STATUSES)}")

@@ -89,9 +89,61 @@ def test_opencode_reads_the_file_opencode_writes(opencode_dir: Path) -> None:
     assert mcp_servers.opencode_config_file() == opencode_dir / "opencode.jsonc"
     target = mcp_servers.opencode_target()
     assert target.registered() == {"other": ["x"], "esc": ARGV}
-    assert mcp_servers.state(target, "esc", ARGV) == "current"
-    assert mcp_servers.state(target, "esc", ["/other"]) == "other"
-    assert mcp_servers.state(target, "nope", ARGV) == "absent"
+
+
+def test_an_unreadable_config_is_an_error_not_an_empty_one(opencode_dir: Path,
+                                                            monkeypatch) -> None:
+    config = opencode_dir / "opencode.json"
+    config.write_text("{ broken")
+    target = mcp_servers.opencode_target()
+    with pytest.raises(mcp_servers.McpError):
+        target.registered()
+    assert mcp_servers.registered_with("esc", [target]) == []
+    config.write_text(OPENCODE)
+    assert "esc" in target.registered()
+    config.write_text("{ half written")
+    assert "esc" in target.registered()      # the last answer, while the file is rewritten
+
+
+def test_an_unchanged_config_is_parsed_once(opencode_dir: Path, monkeypatch) -> None:
+    config = opencode_dir / "opencode.json"
+    config.write_text(OPENCODE)
+    parsed: list = []
+    real = mcp_servers._opencode_parse
+    monkeypatch.setattr(mcp_servers, "_opencode_parse",
+                        lambda text: parsed.append(1) or real(text))
+    target = mcp_servers.opencode_target()
+    assert target.registered() == target.registered()
+    assert len(parsed) == 1
+    config.write_text(OPENCODE.replace('"other"', '"another"'))
+    assert "another" in target.registered() and len(parsed) == 2
+
+
+def test_opencode_uninstall_keeps_a_symlinked_config_a_symlink(opencode_dir: Path,
+                                                               tmp_path: Path) -> None:
+    real = tmp_path / "dotfiles" / "opencode.json"
+    real.parent.mkdir()
+    real.write_text(OPENCODE)
+    try:
+        (opencode_dir / "opencode.json").symlink_to(real)
+    except OSError as exc:  # Windows without the symlink privilege
+        pytest.skip(f"cannot create symlinks: {exc}")
+    assert mcp_servers.opencode_target().uninstall("esc")[0]
+    assert (opencode_dir / "opencode.json").is_symlink()
+    assert "esc" not in jsonc.loads(real.read_text())["mcp"]
+    assert [p.name for p in real.parent.iterdir()] == ["opencode.json"]
+
+
+@pytest.mark.parametrize("have, want, add_missing, expected", [
+    (None, True, True, "install"),
+    (None, True, False, None),
+    (ARGV, True, False, None),
+    (["/old"], True, False, "install"),
+    (ARGV, False, False, "remove"),
+    (None, False, True, None),
+])
+def test_action(have, want, add_missing, expected) -> None:
+    assert mcp_servers.action(have, ARGV, want, add_missing) == expected
 
 
 def test_opencode_install_runs_mcp_add_and_uninstall_edits_the_file(
@@ -120,7 +172,8 @@ def test_opencode_install_runs_mcp_add_and_uninstall_edits_the_file(
     ok, _ = target.uninstall("esc")
     assert ok and "esc" not in target.registered()
     assert "// my settings" in config.read_text()
-    assert config.stat().st_mode & 0o777 == 0o600
+    if os.name != "nt":   # Windows has no POSIX file modes
+        assert config.stat().st_mode & 0o777 == 0o600
     assert target.uninstall("esc") == (True, "esc is not registered")
 
 
@@ -194,6 +247,13 @@ def test_mcp_name_needs_mcp_command() -> None:
     del record["mcp_command"]
     assert validate_advertise([record]) == [
         "entry 0 (x): 'mcp_name' and 'mcp_command' go together"]
+    record["mcp_command"] = ["python3", "server.py", " "]
+    assert validate_advertise([record]) == [
+        "entry 0 (x): mcp_command has an empty argument",
+        "entry 0 (x): mcp_command needs absolute paths, got ['python3', 'server.py']"]
+    record["mcp_command"] = [ARGV[0], 3]
+    assert validate_advertise([record]) == [
+        "entry 0 (x): 'mcp_command' must be a list of strings"]
 
 
 def test_discovery_drops_a_server_without_its_command(tmp_path: Path) -> None:
@@ -228,8 +288,42 @@ def test_tui_plans_mcp_steps_for_active_targets_only(monkeypatch: pytest.MonkeyP
     assert step.kind == "mcp_install"
     result = tui.execute([step], lambda _m: None)
     assert result["mcp_install"] == 1 and target.registered() == {"esc": ARGV}
+    row.mcp_was = True                  # what refresh_status sets after the Apply
     row.mcp = False
     assert [s.kind for s in tui.plan([row], [], set(), [target], {"fake"})] == ["mcp_remove"]
+
+
+def test_tui_mcp_plan_follows_the_window(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Ticked before: no new harness. Unticked: every harness. Untouched: nothing."""
+    monkeypatch.setattr(gi, "is_installed", lambda t: True)
+    monkeypatch.setattr(gi, "needs_update", lambda t: False)
+    a, b = _fake_target({"esc": ARGV}), _fake_target({})
+    a, b = a._replace(key="a"), b._replace(key="b")
+    (row,) = tui.default_rows([_tool()], mcp_targets=[a, b])
+    assert row.mcp and row.mcp_was
+    assert tui.plan([row], [], set(), [a, b], {"b"}) == []
+    row.mcp = False
+    assert [(s.kind, s.target.key) for s in tui.plan([row], [], set(), [a, b], set())] == [
+        ("mcp_remove", "a")]
+
+    def broken():
+        raise mcp_servers.McpError("cannot read")
+    unread = a._replace(registered=broken)
+    (row,) = tui.default_rows([_tool()], mcp_targets=[unread])
+    assert not row.mcp and not row.mcp_was
+    assert tui.plan([row], [], set(), [unread], {"a"}) == []
+
+
+def test_tui_refresh_reads_the_mcp_state_again(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(gi, "is_installed", lambda t: True)
+    monkeypatch.setattr(gi, "needs_update", lambda t: False)
+    have: Dict[str, List[str]] = {}
+    target = _fake_target(have)
+    (row,) = tui.default_rows([_tool()], mcp_targets=[target])
+    st = tui._State(rows=[row], targets=[], active=set(), title="", mcp_targets=[target])
+    have["esc"] = ARGV
+    st.refresh_status()
+    assert row.mcp_was
 
 
 def test_headless_apply_registers_only_with_named_harnesses(monkeypatch) -> None:
@@ -255,13 +349,15 @@ def test_gui_apply_spreads_a_server_only_from_a_box_ticked_now(monkeypatch) -> N
     tool = _tool()
     key = f"{tool.category}_{tool.name}"
     app = SimpleNamespace(tools=[tool], _extract_hint_from_output=lambda _o: None,
-                          _harnesses=([], [_fake_target(have)]))
+                          _targets=lambda: ([], [_fake_target(have)]))
     run = lambda state, was: gi.InstallerApp._apply_worker(  # noqa: E731
         app, {key: True}, {}, {}, queue.Queue(), mcp_state={key: state}, mcp_was={key: was})
 
     run(True, True)     # ticked before, by another harness: nothing new here
     assert have == {}
     run(True, False)    # the user ticked it
+    assert have == {"esc": ARGV}
+    run(False, False)   # never ticked: e.g. the config could not be read at the start
     assert have == {"esc": ARGV}
     run(False, True)
     assert have == {}
@@ -329,7 +425,7 @@ def test_gui_apply_writes_a_skill_to_each_harness_only_from_a_box_ticked_now(mon
     tool = _tool(mcp="", argv=(), skill="s")
     key = f"{tool.category}_{tool.name}"
     app = SimpleNamespace(tools=[tool], _extract_hint_from_output=lambda _o: None,
-                          _harnesses=([target("a"), target("b")], []))
+                          _targets=lambda: ([target("a"), target("b")], []))
     run = lambda state, was: gi.InstallerApp._apply_worker(  # noqa: E731
         app, {key: True}, {}, {key: state}, queue.Queue(), skill_was={key: was})
 
@@ -339,6 +435,45 @@ def test_gui_apply_writes_a_skill_to_each_harness_only_from_a_box_ticked_now(mon
     assert have == {"a": {"s"}, "b": {"s"}}
     run(False, True)
     assert have == {"a": set(), "b": set()}
+
+
+def test_gui_apply_counts_a_skill_target_that_raises(monkeypatch) -> None:
+    pytest.importorskip("tkinter")
+    from cli_tools_kit import install
+    monkeypatch.setattr(install, "is_installed", lambda t: True)
+    monkeypatch.setattr(install, "needs_update", lambda t: False)
+
+    def boom(tool):
+        raise PermissionError("read-only config dir")
+    target = tui.SkillTarget("a", "a", installed=lambda t: False, install=boom,
+                             uninstall=boom)
+    tool = _tool(mcp="", argv=(), skill="s")
+    key = f"{tool.category}_{tool.name}"
+    app = SimpleNamespace(tools=[tool], _extract_hint_from_output=lambda _o: None,
+                          _targets=lambda: ([target], []))
+    events: queue.Queue = queue.Queue()
+    gi.InstallerApp._apply_worker(app, {key: True}, {}, {key: True}, events,
+                                  skill_was={key: False})
+    items = []
+    while not events.empty():
+        items.append(events.get())
+    done = items[-1][1]
+    assert done["errors"] == 1 and done["skills_installed"] == 0
+    assert any("read-only config dir" in str(item) for item in items)
+    assert not any("Unexpected error" in str(item) for item in items)
+
+
+def test_tui_execute_counts_a_skill_target_that_raises() -> None:
+    def boom(tool):
+        raise PermissionError("read-only config dir")
+    target = tui.SkillTarget("a", "a", installed=lambda t: False, install=boom,
+                             uninstall=boom)
+    lines: List[str] = []
+    tool = _tool(mcp="", argv=(), skill="s")
+    result = tui.execute([tui.Step("skill_install", tool, target),
+                          tui.Step("skill_remove", tool, target)], lines.append)
+    assert result["errors"] == 2
+    assert "    read-only config dir" in lines
 
 
 def test_window_builds_the_mcp_cell_and_apply_leaves_an_uninstalled_row_alone(
@@ -372,9 +507,15 @@ def test_window_builds_the_mcp_cell_and_apply_leaves_an_uninstalled_row_alone(
         check = {k: v.get() for k, v in app.check_vars.items()}
         check["Smoke_plain"] = True                   # an Apply for another row
         monkeypatch.setattr(gi, "install_tool", lambda t, skip_deps=False: (True, ""))
-        gi.InstallerApp._apply_worker(app, check, {}, {}, queue.Queue(),
+        events: queue.Queue = queue.Queue()
+        gi.InstallerApp._apply_worker(app, check, {}, {}, events,
                                       mcp_state={key: True}, mcp_was=dict(app.mcp_was))
         assert have == {"esc": ARGV}
+        while not events.empty():
+            item = events.get()
+        have.clear()                                  # removed elsewhere meanwhile
+        app._finish_apply_changes(item[1])
+        assert not app.mcp_was[key]                   # the next Apply starts from the host
     finally:
         root.destroy()
 
@@ -386,3 +527,28 @@ def test_the_window_uses_the_built_in_skill_targets_only(monkeypatch) -> None:
     monkeypatch.setattr(state, "SKILL_TARGETS", [tui.claude_target(), own])
     skill, _ = gi.InstallerApp._targets(SimpleNamespace(_harnesses=None))
     assert [t.key for t in skill] == ["claude"]     # opencode is not on this test host
+
+
+def test_opencode_skill_uninstall_says_when_opencode_still_loads_it(skill_dirs) -> None:
+    claude, own = skill_dirs
+    tool = _tool(skill="s")
+    target = tui.opencode_target()
+    gi.install_skill_for_tool(tool)
+    ok, out = target.uninstall(tool)
+    assert not ok and str(claude / "s") in out
+
+
+def test_opencode_own_copy_is_stale_once_the_tool_changes(skill_dirs, tmp_path: Path) -> None:
+    claude, own = skill_dirs
+    folder = tmp_path / "tool"
+    folder.mkdir()
+    (folder / "main.py").write_text("print(1)\n")
+    tool = _tool(skill="s")._replace(script_path=str(folder / "main.py"))
+    target = tui.opencode_target()
+    assert target.install(tool)[0] and not (claude / "s").exists()
+    assert not target.stale(tool)
+    (folder / "main.py").write_text("print(22)\n")
+    assert target.stale(tool)
+    assert target.install(tool)[0] and not target.stale(tool)
+    assert target.uninstall(tool)[0]
+    assert tui._opencode_marks() == {}

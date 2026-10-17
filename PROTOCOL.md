@@ -319,7 +319,8 @@ The tool's side stays the same. cli-tools-kit has two targets built in:
   when neither has the skill, or `OPENCODE_DISABLE_CLAUDE_CODE_SKILLS` is set,
   does the parent copy what `--install-skill` writes into
   `~/.config/opencode/skills/<name>/` (and removes the `~/.claude/skills` copy
-  again if it was not there before).
+  again if it was not there before). That copy is written again on the next
+  Apply once a file in the tool's directory has changed.
 
 Contract the tool must satisfy:
 
@@ -397,7 +398,9 @@ starts with every session of its harness. A box that starts ticked (the server
 is registered with at least one harness) adds no new harness on Apply; only a
 box the user ticks does. A name registered with another command, such as an
 old checkout path, is replaced on the next Apply. Unticking removes the server
-from every harness on the host.
+from every harness on the host. A box that starts unticked and stays so changes
+nothing, also when a harness config could not be read. On the text screen the
+MCP target line chooses only where a newly ticked server is added.
 
 ## Claude Code plugins (`claude_plugin`)
 

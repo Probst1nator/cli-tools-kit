@@ -256,6 +256,13 @@ def _is_icon_dir(path: str) -> bool:
     return os.path.isdir(path)
 
 
+def clear_cache() -> None:
+    """Forget the icon theme and the directory checks. An install can add icon
+    directories, and the user can switch the theme while the window is open."""
+    _get_current_icon_theme.cache_clear()
+    _is_icon_dir.cache_clear()
+
+
 def find_icon_path(icon_name: str, size: int = 32) -> Optional[str]:
     """Find the path to an icon file from the system theme.
 

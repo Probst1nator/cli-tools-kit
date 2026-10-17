@@ -332,7 +332,10 @@ A skill can go to more than one place. The built-in targets are Claude Code
 a wrapper replaces the list with `skill_targets`. MCP servers have their own
 target line (`mcp_targets`). The screen lists the targets the host has, ticks
 the first of each kind, and lets the user tick which ones Apply writes to
-(keys `1`..`9`, skill targets first):
+(keys `1`..`9`, skill targets first). For MCP servers the ticked targets are
+where a newly ticked server goes. As in the window, an outdated command is
+replaced and an unticked server removed on every harness that has it. A
+wrapper's own skill target looks like this:
 
 ```python
 from cli_tools_kit.tui_installer import SkillTarget, claude_target

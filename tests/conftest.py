@@ -194,11 +194,14 @@ def no_real_harnesses(tmp_path_factory: pytest.TempPathFactory,
     not found; Claude Code's .claude.json is a temp file and `claude` never
     runs. A test that wants a harness patches it back in.
     """
-    from cli_tools_kit import mcp_servers
+    from cli_tools_kit import mcp_servers, tui_installer
     xdg = tmp_path_factory.mktemp("xdg")
     monkeypatch.setenv("XDG_CONFIG_HOME", str(xdg))
     monkeypatch.setattr(mcp_servers, "_opencode_exe", lambda: None)
     monkeypatch.setattr(mcp_servers, "claude_config_file", lambda: xdg / "claude.json")
+    monkeypatch.setattr(mcp_servers, "_last", {})
+    monkeypatch.setattr(tui_installer, "_opencode_marks_file",
+                        lambda: str(xdg / tui_installer.OPENCODE_MARKS_NAME))
 
     def no_claude(args):
         raise mcp_servers.McpError("tests do not run claude")

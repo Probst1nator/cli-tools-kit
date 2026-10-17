@@ -773,6 +773,7 @@ class InstallerApp:
         self.skill_was.clear()
         self.mcp_was.clear()
         self._harnesses = None
+        icons.clear_cache()
         self.status_labels.clear()
         self.icon_labels.clear()
         self.tk_frames.clear()
@@ -3342,7 +3343,6 @@ class InstallerApp:
         inner = tk.Frame(tip, bg=t["log_bg"])
         inner.pack(padx=1, pady=1)
 
-        n = len(items)
         if not items:
             tk.Label(inner, text="✓ All shortcuts up to date", bg=t["log_bg"],
                      fg=t["success"], font=("", 10, "bold"), anchor="w",
@@ -3926,12 +3926,8 @@ class InstallerApp:
             # written SKILL.md as a side effect (scrape, studon, …) — that's
             # harmless: --install-skill is idempotent and --uninstall-skill
             # cleanly reverses it if the user unchecked the Skill column.
-            harnesses = getattr(self, "_harnesses", None)
-            if harnesses is None:
-                from . import tui_installer
-                skill = tui_installer.default_targets()
-                harnesses = (tui_installer.present(skill) or skill, [])
-            skill_targets, mcp_targets = harnesses
+            # _apply_changes read the harnesses on the main thread.
+            skill_targets, mcp_targets = self._targets()
             for tool in self.tools:
                 if not tool.skill_name:
                     continue
@@ -3953,11 +3949,16 @@ class InstallerApp:
                 if not (tool.mcp_name and tool.mcp_command) or key not in (mcp_state or {}):
                     continue
                 want_mcp = mcp_state[key]
+                was_mcp = (mcp_was or {}).get(key, False)
                 if want_mcp and not install.is_installed(tool):
+                    continue
+                # A box that started unticked and still is changes nothing:
+                # it may only mean that a harness config could not be read.
+                if not want_mcp and not was_mcp:
                     continue
                 # A box that was ticked already registers with no new harness.
                 done = mcp_servers.apply(tool.mcp_name, tool.mcp_command, want_mcp, mcp_targets,
-                                         add_missing=not (mcp_was or {}).get(key, False), log=log)
+                                         add_missing=not was_mcp, log=log)
                 counts["mcp_installed"] += done["installed"]
                 counts["mcp_removed"] += done["removed"]
                 counts["errors"] += done["errors"]
@@ -4000,14 +4001,16 @@ class InstallerApp:
         where = "" if target.key == "claude" else f" ({target.label})"
         if want_skill and tool_installed_now and ((not have_skill and not was) or skill_stale):
             log(f"{'Updating' if have_skill else 'Installing'} skill: {tool.skill_name}{where}")
-            success, output = target.install(tool)
-            kind, verb = "skills_installed", "installed"
+            act, kind, verb = target.install, "skills_installed", "installed"
         elif have_skill and not want_skill:
             log(f"Removing skill: {tool.skill_name}{where}")
-            success, output = target.uninstall(tool)
-            kind, verb = "skills_removed", "removed"
+            act, kind, verb = target.uninstall, "skills_removed", "removed"
         else:
             return
+        try:
+            success, output = act(tool)
+        except Exception as exc:  # e.g. a copy into a config dir that is not writable
+            success, output = False, str(exc)
         if success:
             counts[kind] += 1
             log(f"  ✓ skill '{tool.skill_name}' {verb}", "success")
@@ -4021,12 +4024,22 @@ class InstallerApp:
 
     def _finish_apply_changes(self, result):
         """Main-thread finalize after an _apply_changes worker completes."""
+        from . import mcp_servers
+        icons.clear_cache()
         # Installing one Claude Code plugin row can disable another; untick it
         # so the next Apply does not switch it back on.
         for tool in self.tools:
-            var = self.check_vars.get(f"{tool.category}_{tool.name}")
+            key = f"{tool.category}_{tool.name}"
+            var = self.check_vars.get(key)
             if tool.claude_plugin and var is not None:
                 var.set(install.is_installed(tool))
+            # The next Apply compares against what the host has now, so a box
+            # ticked in this Apply counts as one that started ticked.
+            if key in self.skill_was:
+                self.skill_was[key] = self._skill_present(tool)
+            if key in self.mcp_was:
+                self.mcp_was[key] = bool(mcp_servers.registered_with(tool.mcp_name,
+                                                                     self._targets()[1]))
         self._update_status_labels()
         errors = result["errors"]
 
