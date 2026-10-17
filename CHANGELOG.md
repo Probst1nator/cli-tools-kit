@@ -7,6 +7,10 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Changed
+- The LLM grouping builds its tool blurbs in parallel, up to 16 `--advertise`
+  runs at a time, as discovery does.
+
 ### Fixed
 - Without gsettings, the icon theme lookup took the first `Theme=` line of
   KDE's `kdeglobals`, which can be the sound theme (`[Sounds]`). It now reads

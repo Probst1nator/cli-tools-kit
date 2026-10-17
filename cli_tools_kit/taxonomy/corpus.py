@@ -13,6 +13,7 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor
 from typing import Dict, List, Tuple
 
 MAX_CHARS = 6000
@@ -21,6 +22,7 @@ BLURB_PARAGRAPHS = 2
 BLURB_HEADINGS = 8
 DOC_FILES = ("CLAUDE.md", "README.md")
 ADVERTISE_TIMEOUT = 5
+PROBE_WORKERS = 16
 SKIP_PREFIXES = ("_", ".")
 SKIP_NAMES = {"dev"}
 
@@ -264,5 +266,13 @@ def tool_blurb(root: str, name: str) -> str:
 
 
 def tool_blurbs(root: str) -> Dict[str, str]:
-    """One condensed blurb per tool."""
-    return {name: tool_blurb(root, name) for name in tool_dirs(root)}
+    """One condensed blurb per tool.
+
+    Each blurb runs the tool's --advertise, so they are built up to
+    PROBE_WORKERS at a time, as discovery runs its probes.
+    """
+    names = tool_dirs(root)
+    if not names:
+        return {}
+    with ThreadPoolExecutor(max_workers=min(len(names), PROBE_WORKERS)) as pool:
+        return dict(zip(names, pool.map(lambda name: tool_blurb(root, name), names)))

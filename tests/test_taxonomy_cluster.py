@@ -228,6 +228,18 @@ def test_fingerprint_ignores_an_unrelated_file(tmp_path):
     assert corpus.corpus_fingerprint(str(tmp_path)) == before
 
 
+def test_tool_blurbs_keep_each_tool_with_its_own_advertise(tmp_path):
+    names = ["alpha", "beta", "gamma"]
+    for name in names:
+        _write_tool(tmp_path, name, main_py=(
+            f"import json\nprint(json.dumps({{'name': '{name}', 'desc': 'does {name}'}}))\n"))
+    blurbs = corpus.tool_blurbs(str(tmp_path))
+    assert list(blurbs) == names
+    for name in names:
+        assert blurbs[name] == corpus.tool_blurb(str(tmp_path), name)
+        assert f"does {name}" in blurbs[name]
+
+
 # --- staleness and ensure_groups ------------------------------------------
 
 def _write_current_groups(tmp_path, k=6, **extra):
