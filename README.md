@@ -609,7 +609,7 @@ Consumers, each a self-installing tool that answers `--advertise`:
 
 - [`studon-client`](https://github.com/Probst1nator/studon-client) — `ToolInstaller` + `CronInstaller` + a Claude Code skill
 - [`BlogGen`](https://github.com/AutomatedAlchemy/BlogGen) — install machinery falls back gracefully when the kit is absent
-- [`lernclaude`](https://github.com/Probst1nator/lernclaude) — same pattern
+- [`studyclaude`](https://github.com/AutomatedAlchemy/studyclaude) — same pattern
 - [`manim-kit`](https://github.com/AutomatedAlchemy/manim-kit) — reports `skill_status`
 
 Two parent installers built on `gui_installer` are private (a `tools_*/<tool>/main.py`
