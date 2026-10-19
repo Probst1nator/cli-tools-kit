@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.7.1] - 2026-10-19
+
 ### Fixed
 - On Windows, a Start Menu shortcut that points at a script in another tools
   folder (the root moved, or a second installer wrote it) now needs an update.
