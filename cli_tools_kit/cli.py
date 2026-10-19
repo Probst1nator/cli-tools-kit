@@ -225,6 +225,8 @@ def cli_upgrade(tools: List[discovery.ToolEntry]) -> int:
         return 0
     for item in items:
         print(f"  {item.label()}")
+        for line in item.change_lines():
+            print(f"      {line}")
     print()
     result = upgrade.upgrade(items, tools, lambda msg, tag="info": print(msg))
     print(f"\nDone{', with errors' if result['errors'] else ''}.\n")

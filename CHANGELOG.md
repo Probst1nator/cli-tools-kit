@@ -7,6 +7,15 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Added
+- An offered upgrade lists the titles of the commits it brings, newest first:
+  in the confirmation, the update badge's tooltip, the text screen and
+  `--upgrade`. For a repo these are the commits it is behind its upstream; for
+  the kit, the commits between the installed release tag and the new one, asked
+  from GitHub once per pair of versions and cached. A title that GitHub cannot
+  give does not count as offline. New `upgrade.Item.changes`,
+  `Item.change_lines()`, `upgrade.repo_changes()` and `upgrade.kit_changes()`.
+
 ## [1.7.1] - 2026-10-19
 
 ### Fixed

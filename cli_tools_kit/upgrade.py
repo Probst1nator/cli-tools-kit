@@ -6,8 +6,12 @@ installer runs on. :func:`check` lists them, :func:`upgrade` pulls and
 reinstalls. Neither touches tkinter, so the window, the text screen and
 ``--upgrade`` share them.
 
-The network is used at most once a day: one ``git fetch`` per repo and one
-``pip install --dry-run``. What was fetched is compared with the checkout on
+Each item carries the titles of the commits it brings: ``git log`` over what
+was fetched for a repo, GitHub's comparison of the two release tags for the kit.
+
+The network is used at most once a day: one ``git fetch`` per repo, one
+``pip install --dry-run`` and, when the kit is behind, one GitHub request for
+its commit titles. What was fetched is compared with the checkout on
 every call, so a repo pulled by hand stops showing at once. The login check
 (``--check``) never calls this module.
 
@@ -25,15 +29,21 @@ import re
 import subprocess
 import sys
 import time
+import unicodedata
+import urllib.request
 from pathlib import Path
 from typing import Callable, Dict, List, NamedTuple, Optional, Sequence, Tuple
 
 from . import discovery, install, state
-from .sources import GIT_SAFE
+from .sources import GIT_SAFE, GITHUB_API
 
 KIT = "cli-tools-kit"
+# Where the kit's release tags (v1.7.1, ...) live. Hard-coded like the API host,
+# so no file on the host can point the request somewhere else.
+KIT_REPO = "Probst1nator/cli-tools-kit"
 CHECK_INTERVAL = 24 * 3600   # seconds between two network checks
 CACHE_NAME = "upgrade-check.json"
+TITLE_MAX = 100              # characters of one commit title that are shown
 
 
 class Item(NamedTuple):
@@ -43,9 +53,25 @@ class Item(NamedTuple):
     name: str
     path: str     # the repo; for "kit", the interpreter
     detail: str   # "3 commits", "1.0.0 → 1.1.0"
+    changes: Tuple[str, ...] = ()   # titles of the commits it brings, newest first
 
     def label(self) -> str:
         return f"{self.name} ({self.detail})"
+
+    def change_lines(self, limit: int = 10) -> List[str]:
+        """The commit titles as display lines, at most ``limit`` and one for the rest."""
+        lines = [f"- {title}" for title in self.changes[:limit]]
+        if len(self.changes) > limit:
+            lines.append(f"  …and {len(self.changes) - limit} more")
+        return lines
+
+
+def _title(text: str) -> str:
+    """One commit title as display text. Titles come from repos and from GitHub,
+    so control and format characters (ANSI escapes, bidi overrides) are dropped."""
+    text = " ".join("".join(" " if unicodedata.category(ch)[0] == "C" else ch
+                            for ch in text).split())
+    return text if len(text) <= TITLE_MAX else text[:TITLE_MAX - 1] + "…"
 
 
 # --- git ---------------------------------------------------------------------------
@@ -85,6 +111,12 @@ def behind(path) -> Optional[int]:
 
 def fetch(path) -> bool:
     return _git(path, "fetch", "--quiet", timeout=120)[0]
+
+
+def repo_changes(path) -> Tuple[str, ...]:
+    """Titles of the fetched commits ``path`` does not have yet, newest first."""
+    ok, out = _git(path, "log", "--no-merges", "--format=%s", "HEAD..@{u}")
+    return tuple(_title(line) for line in out.splitlines() if line.strip()) if ok else ()
 
 
 def _repos() -> List[Tuple[str, str, Path]]:
@@ -163,6 +195,36 @@ def latest_kit() -> Optional[str]:
     return kit_version()   # pip would install nothing: this is the newest in range
 
 
+def kit_changes(current: str, latest: str) -> Optional[Tuple[str, ...]]:
+    """Titles of the kit's commits from release ``current`` to ``latest``, newest first.
+
+    GitHub compares the two release tags. None when it could not say: offline,
+    rate-limited, or a version without a tag.
+    """
+    if not all(re.fullmatch(r"[0-9A-Za-z.+-]+", v) for v in (current, latest)):
+        return None
+    request = urllib.request.Request(  # noqa: S310 — host and repo are hard-coded above
+        f"{GITHUB_API}/repos/{KIT_REPO}/compare/v{current}...v{latest}",
+        headers={"Accept": "application/vnd.github+json",
+                 "User-Agent": f"cli-tools-kit/{kit_version()}"})
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            data = json.loads(response.read().decode("utf-8"))
+    except (OSError, ValueError):
+        return None
+    commits = data.get("commits") if isinstance(data, dict) else None
+    if not isinstance(commits, list):
+        return None
+    titles = []
+    for entry in reversed(commits):   # GitHub lists the oldest first
+        if not isinstance(entry, dict) or len(entry.get("parents") or ()) > 1:
+            continue
+        message = str((entry.get("commit") or {}).get("message") or "")
+        if message.strip():
+            titles.append(_title(message.strip().splitlines()[0]))
+    return tuple(titles)
+
+
 def _version_key(version: str) -> Tuple[int, ...]:
     return tuple(int(part) for part in re.findall(r"\d+", version)[:3]) or (0,)
 
@@ -197,7 +259,8 @@ def check(force: bool = False, now: Optional[float] = None) -> List[Item]:
     check is a day old. When every fetch failed, or pip did, the date is left
     alone, so an offline start is retried on the next one. One repo that
     cannot be fetched (no credentials for a private repo) does not count as
-    offline, or every start would go to the network again.
+    offline, or every start would go to the network again. Nor do the kit's
+    commit titles, which are asked for once per pair of versions and cached.
     """
     now = time.time() if now is None else now
     cache = _load_cache()
@@ -212,7 +275,8 @@ def check(force: bool = False, now: Optional[float] = None) -> List[Item]:
         count = behind(path)
         if count:
             items.append(Item(kind, name, str(path),
-                              f"{count} commit{'' if count == 1 else 's'}"))
+                              f"{count} commit{'' if count == 1 else 's'}",
+                              repo_changes(path)))
 
     if kit_blocker() is None:
         cached = cache.get("kit") if cache.get("kit_python") == sys.executable else None
@@ -225,7 +289,17 @@ def check(force: bool = False, now: Optional[float] = None) -> List[Item]:
                 cache.update(kit=latest, kit_python=sys.executable)
         current = kit_version()
         if latest and _version_key(latest) > _version_key(current):
-            items.append(Item("kit", KIT, sys.executable, f"{current} → {latest}"))
+            span = f"{current}...{latest}"
+            saved = cache.get("kit_changes")
+            changes = None
+            if isinstance(saved, dict) and saved.get("range") == span:
+                changes = tuple(_title(str(t)) for t in saved.get("titles") or ())
+            elif online:
+                changes = kit_changes(current, latest)
+                if changes is not None:
+                    cache["kit_changes"] = {"range": span, "titles": list(changes)}
+            items.append(Item("kit", KIT, sys.executable, f"{current} → {latest}",
+                              changes or ()))
 
     if online and network_ok:
         cache["checked"] = now

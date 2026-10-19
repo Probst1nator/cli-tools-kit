@@ -306,14 +306,18 @@ background whether anything it runs is out of date:
   anything below the next major version.
 
 If something is, a strip above the table lists it with an Upgrade button (on
-the text screen, a log line and the `u` key). Upgrade pulls the repos with `git
+the text screen, a log line and the `u` key). The confirmation, the update
+badge's tooltip, the text screen and `--upgrade` also list the titles of the
+commits each upgrade brings, newest first: for a repo the commits it is behind,
+for the kit the commits between the installed release and the new one. Upgrade pulls the repos with `git
 pull --ff-only`, runs `pip install --upgrade` for the kit, reinstalls the
 installed tools of each pulled repo, and starts the installer again with its
 original command line so the new code is loaded. `--upgrade` does the same
 from a script, checking at once and without the restart.
 
-The network is used at most once a day: one `git fetch` per repo and one `pip
-install --dry-run`, cached under the identity's cache directory. The
+The network is used at most once a day: one `git fetch` per repo, one `pip
+install --dry-run` and, when a newer kit is found, one GitHub request for its
+commit titles, cached under the identity's cache directory. The
 comparison with what is on disk runs on every start, so a repo pulled by hand
 stops showing at once. Git never asks for a password here; a private repo
 without stored credentials is skipped. The kit is left alone when it runs from

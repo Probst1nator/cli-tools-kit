@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import io
 import json
 import subprocess
 import sys
+import urllib.error
 from pathlib import Path
 
 import pytest
@@ -56,7 +58,8 @@ def test_a_clone_behind_its_remote_is_found_and_pulled(remote) -> None:
 
     push(2)
     items = upgrade.check(force=True)
-    assert [(i.kind, i.name, i.detail) for i in items] == [("source", "tools", "2 commits")]
+    assert [(i.kind, i.name, i.detail, i.changes) for i in items] == [
+        ("source", "tools", "2 commits", ("v3", "v2"))]
 
     lines = []
     result = upgrade.upgrade(items, [], lambda msg, tag="info": lines.append(msg))
@@ -164,15 +167,63 @@ def test_a_newer_kit_within_the_pin_is_offered(tmp_path, monkeypatch, engine_sta
     monkeypatch.setattr(upgrade, "_cache_path", lambda: tmp_path / "cache.json")
     monkeypatch.setattr(upgrade, "kit_blocker", lambda: None)
     monkeypatch.setattr(upgrade, "latest_kit", lambda: "99.0.0")
+    monkeypatch.setattr(upgrade, "kit_changes", lambda current, latest: ("feat: b", "fix: a"))
     state.UPGRADE_REPOS = []
     state.ENTRY_SCRIPT = str(tmp_path / "installer.py")
     items = upgrade.check(force=True)
-    assert [(i.kind, i.detail) for i in items] == [
-        ("kit", f"{upgrade.kit_version()} → 99.0.0")]
-    # The answer is kept for the day, per interpreter.
+    assert [(i.kind, i.detail, i.changes) for i in items] == [
+        ("kit", f"{upgrade.kit_version()} → 99.0.0", ("feat: b", "fix: a"))]
+    # The answers are kept for the day, per interpreter.
     monkeypatch.setattr(upgrade, "latest_kit", lambda: pytest.fail("asked pip again"))
-    assert [i.kind for i in upgrade.check(now=json.loads(
-        (tmp_path / "cache.json").read_text())["checked"] + 60)] == ["kit"]
+    monkeypatch.setattr(upgrade, "kit_changes", lambda *a: pytest.fail("asked GitHub again"))
+    assert [i.changes for i in upgrade.check(now=json.loads(
+        (tmp_path / "cache.json").read_text())["checked"] + 60)] == [("feat: b", "fix: a")]
+
+
+def test_kit_titles_github_cannot_give_do_not_count_as_offline(
+        tmp_path, monkeypatch, engine_state) -> None:
+    monkeypatch.setattr(upgrade, "_cache_path", lambda: tmp_path / "cache.json")
+    monkeypatch.setattr(upgrade, "kit_blocker", lambda: None)
+    monkeypatch.setattr(upgrade, "latest_kit", lambda: "99.0.0")
+    monkeypatch.setattr(upgrade, "kit_changes", lambda current, latest: None)
+    state.UPGRADE_REPOS = []
+    state.ENTRY_SCRIPT = str(tmp_path / "installer.py")
+    assert [i.changes for i in upgrade.check(force=True, now=1000.0)] == [()]
+    assert upgrade.last_checked() == 1000.0
+
+
+def test_kit_changes_reads_the_github_comparison(monkeypatch) -> None:
+    urls = []
+
+    def urlopen(request, timeout):
+        urls.append(request.full_url)
+        return io.BytesIO(json.dumps({"commits": [
+            {"parents": [{}], "commit": {"message": "fix: older\n\nbody"}},
+            {"parents": [{}, {}], "commit": {"message": "Merge branch 'x'"}},
+            {"parents": [{}], "commit": {"message": "feat: \x1b[31mred\u202e " + "x" * 200}},
+        ]}).encode())
+
+    monkeypatch.setattr(upgrade.urllib.request, "urlopen", urlopen)
+    newest, older = upgrade.kit_changes("1.7.0", "1.7.1")
+    assert urls == [f"https://api.github.com/repos/{upgrade.KIT_REPO}/compare/v1.7.0...v1.7.1"]
+    assert older == "fix: older"
+    assert newest.startswith("feat: [31mred x") and len(newest) == upgrade.TITLE_MAX
+    assert not any(ch in newest for ch in "\x1b\u202e")
+    # A version that is not one never reaches the URL.
+    assert upgrade.kit_changes("1.7.0", "1.7.1/../../x") is None
+    assert len(urls) == 1
+
+    def offline(request, timeout):
+        raise urllib.error.URLError("offline")
+
+    monkeypatch.setattr(upgrade.urllib.request, "urlopen", offline)
+    assert upgrade.kit_changes("1.7.0", "1.7.1") is None
+
+
+def test_change_lines_cap_the_titles() -> None:
+    item = upgrade.Item("source", "tools", "/r", "12 commits", tuple(f"t{i}" for i in range(12)))
+    assert item.change_lines(3) == ["- t0", "- t1", "- t2", "  …and 9 more"]
+    assert upgrade.Item("kit", upgrade.KIT, "/py", "1.0.0 → 1.1.0").change_lines() == []
 
 
 def test_last_checked_is_the_last_successful_online_check(

@@ -689,6 +689,12 @@ def _drain(st: _State) -> None:
             st.log.append(f"Done: {summary(payload)}" + (f" — run: {hint}" if hint else ""))
         elif kind == "upgrades":
             st.upgrades = list(payload)
+            # The commit titles go first: the log pane can be two lines high,
+            # and the line that names the u key has to stay in view.
+            for item in st.upgrades:
+                if item.changes:
+                    st.log.append(f"New in {item.name}:")
+                    st.log.extend(f"  {line}" for line in item.change_lines(3))
             if st.upgrades:
                 st.log.append("Upgrade available: "
                               + " · ".join(item.label() for item in st.upgrades)

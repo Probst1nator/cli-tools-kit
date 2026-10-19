@@ -3435,7 +3435,9 @@ class InstallerApp:
         for item in versions:
             change = (f"new version {item.detail}" if item.kind == "kit"
                       else f"{item.detail} behind its remote")
-            lines.append((item.name, f"{change}   ·   upgrade from the bar at the top"))
+            detail = "\n".join([f"{change}   ·   upgrade from the bar at the top",
+                                *item.change_lines(5)])
+            lines.append((item.name, detail))
         MAX = 12
         for name, detail in lines[:MAX]:
             tk.Label(inner, text=f"•  {name}", bg=t["log_bg"], fg=t["log_fg"],
@@ -4254,7 +4256,11 @@ class InstallerApp:
         if self._op_in_progress or not self._upgrade_items:
             return
         items = list(self._upgrade_items)
-        lines = "\n".join(f"  • {item.label()}" for item in items)
+        # A few titles per item, so the dialog stays on screen with several.
+        limit = max(3, 16 // len(items))
+        lines = "\n".join("\n".join([f"  • {item.label()}",
+                                     *(f"      {line}" for line in item.change_lines(limit))])
+                          for item in items)
         if not messagebox.askyesno(
             "Upgrade?",
             f"This brings these up to date:\n\n{lines}\n\n"
