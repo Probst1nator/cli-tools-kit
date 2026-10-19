@@ -193,6 +193,50 @@ def test_cli_tool_installs_shims_on_windows(sandbox_home: Path,
     assert not (shim_dir / "fake_tool").exists()
 
 
+@pytest.mark.parametrize("on_desktop", [True, False])
+def test_icon_tool_gets_its_ico_and_a_desktop_copy_on_windows(
+        sandbox_home: Path, monkeypatch: pytest.MonkeyPatch, on_desktop: bool) -> None:
+    monkeypatch.setattr(host, "IS_WINDOWS", True)
+    desktop = sandbox_home / "Desktop"
+    monkeypatch.setattr(host, "desktop_dir", lambda: str(desktop))
+    written: list = []
+
+    def fake_write_shortcut(lnk_path, target, args="", icon=None, terminal=False,
+                            workdir=None):
+        written.append((lnk_path, icon))
+        Path(lnk_path).parent.mkdir(parents=True, exist_ok=True)
+        Path(lnk_path).write_bytes(b"lnk")
+        return True
+
+    monkeypatch.setattr(host, "write_shortcut", fake_write_shortcut)
+
+    script_dir = sandbox_home / "fake_tool"
+    script_dir.mkdir()
+    script = script_dir / "main.py"
+    script.write_text("# dummy\n")
+    (script_dir / "icon.png").write_bytes(b"png")
+    (script_dir / "icon.ico").write_bytes(b"ico")
+
+    installer = ToolInstaller(
+        script_path=str(script),
+        metadata=ToolMetadata(
+            name="Fake Tool", desktop_file="fake_tool.desktop",
+            icon=str(script_dir / "icon.png"), desc="A fake tool for tests",
+            terminal=True, tags=["CLI", "Icon"], desktop_shortcut=on_desktop,
+        ),
+        identity=InstallerIdentity(slug="acme-tools"),
+    )
+    installer.install()
+
+    start_menu = Path(host.start_menu_dir()) / "fake_tool.lnk"
+    assert written == [(str(start_menu), str(script_dir / "icon.ico"))]
+    assert (desktop / "fake_tool.lnk").exists() is on_desktop
+
+    installer.remove()
+    assert not start_menu.exists()
+    assert not (desktop / "fake_tool.lnk").exists()
+
+
 # --- text encoding -----------------------------------------------------------
 
 def test_harden_stdio_turns_unencodable_output_into_question_marks() -> None:

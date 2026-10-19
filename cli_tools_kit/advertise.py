@@ -80,6 +80,8 @@ def advertise(metadata: Union[ToolMetadata, List[ToolMetadata]]) -> NoReturn:
         conditions = getattr(m, "autostart_conditions", None)
         if conditions:
             record["autostart_conditions"] = list(conditions)
+        if getattr(m, "desktop_shortcut", False):
+            record["desktop_shortcut"] = True
         out.append(record)
     print(json.dumps(out))
     sys.exit(0)

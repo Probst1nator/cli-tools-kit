@@ -43,7 +43,7 @@ Each dict in the list describes one installable variant of the tool.
 |---|---|---|---|---|
 | `name` | str | yes | — | Human-readable label shown in the GUI / list. |
 | `desktop_file` | str | yes | — | Filename for the `.desktop` shortcut (e.g. `"my_tool.desktop"`). Also used as alias name if `alias` is unset. |
-| `icon` | str | yes | — | Icon name (freedesktop name like `"utilities-terminal"`) or absolute path. |
+| `icon` | str | yes | — | Icon name (freedesktop name like `"utilities-terminal"`) or absolute path. On Windows a shortcut shows only an `.ico`: the one at this path, or one beside it with the same name. |
 | `desc` | str | yes | — | Short description shown under the name. |
 | `terminal` | bool | no | `False` | If true, launches under `konsole -e`. |
 | `args` | list[str] | no | `[]` | Extra CLI args appended to the entry-point invocation. |
@@ -64,6 +64,7 @@ Each dict in the list describes one installable variant of the tool.
 | `claude_marketplace` | str | with `claude_plugin` | — | Where the plugin's marketplace comes from: a GitHub `owner/repo`, a git or https URL, or a local directory. |
 | `mcp_name` | str | no | — | The name of a stdio MCP server the tool brings along. See "Optional `mcp_name`" below. |
 | `mcp_command` | list[str] | with `mcp_name` | — | The argv that starts that server, with absolute paths (e.g. the venv's python and the server script). |
+| `desktop_shortcut` | bool | no | `False` | With `Icon`: also put a copy of the Start Menu shortcut on the Desktop. Windows only. See "Tags" below. |
 
 All of these are fields of `ToolMetadata`, and `advertise()` emits each optional
 one only when it is set. A record that never touched them is byte-identical to
@@ -112,6 +113,12 @@ Windows there is no alias file: the same `alias` becomes a launcher script
 The `alias` field is independent of `Icon`: set it to also install a bash
 alias alongside a `.desktop` file (handy for GUI tools you also want to launch
 from the terminal).
+
+On Windows `Icon` writes a Start Menu shortcut, `<desktop_file stem>.lnk`.
+`desktop_shortcut: true` copies it onto the Desktop under the same name, and
+`--remove` deletes that copy whenever it exists. On Linux the field changes
+nothing: the app menu is where the `.desktop` entry shows, and what a desktop
+folder does with a `.desktop` file differs between desktop environments.
 
 ## Autostart (start on login)
 

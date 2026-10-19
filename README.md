@@ -134,7 +134,9 @@ The kit runs on Windows as well as Linux. Every platform decision lives in
   new terminal after the first install.
 - A tool tagged `Icon` gets a Start Menu shortcut (`.lnk`) instead of a
   `.desktop` file, and autostart copies that shortcut into the Startup folder.
-  Cron-scheduled autostart is not supported on Windows.
+  A `.lnk` can only show an `.ico`, so put one next to the tool's `.png` icon
+  under the same name. With `desktop_shortcut` set, a copy goes on the Desktop
+  too. Cron-scheduled autostart is not supported on Windows.
 - The tkinter installer window works out of the box. The text screen
   (`--tui`) needs curses, which Python for Windows does not ship:
   `pip install windows-curses`.

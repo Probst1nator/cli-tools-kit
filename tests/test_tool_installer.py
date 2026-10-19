@@ -272,8 +272,10 @@ def test_advertise_emits_taxonomy_and_skill_fields_only_when_set(capsys) -> None
             domain="youtube",
             skill_name="search-youtube",
             skill_status="current",
+            desktop_shortcut=True,
         ))
     rec = json.loads(capsys.readouterr().out)[0]
+    assert rec["desktop_shortcut"] is True
     assert rec["capability"] == "scrape"
     assert rec["domain"] == "youtube"
     assert rec["skill_name"] == "search-youtube"
@@ -283,7 +285,8 @@ def test_advertise_emits_taxonomy_and_skill_fields_only_when_set(capsys) -> None
     with pytest.raises(SystemExit):
         advertise(ToolMetadata(name="W", desktop_file="w.desktop", icon="w", desc="w"))
     rec = json.loads(capsys.readouterr().out)[0]
-    for key in ("capability", "domain", "category", "skill_name", "skill_status"):
+    for key in ("capability", "domain", "category", "skill_name", "skill_status",
+                "desktop_shortcut"):
         assert key not in rec
 
 

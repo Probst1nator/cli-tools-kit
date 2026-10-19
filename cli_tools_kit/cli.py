@@ -62,22 +62,6 @@ def _self_shortcut_path() -> str:
     return os.path.join(state.APPS_DIR, state.SELF_DESKTOP_FILE)
 
 
-def _windows_icon(icon: str) -> Optional[str]:
-    """The .ico Windows can draw for `icon`, or None.
-
-    A .lnk renders only .ico/.exe/.dll; the shell stores a .png path without
-    complaint and then draws nothing. Consumers configure one icon, normally a
-    .png for freedesktop, so take a sibling .ico of the same stem when there is
-    one and otherwise leave the shortcut on its default picture.
-    """
-    if not icon:
-        return None
-    for candidate in (icon, os.path.splitext(icon)[0] + ".ico"):
-        if candidate.lower().endswith(".ico") and os.path.isfile(candidate):
-            return candidate
-    return None
-
-
 def cli_install_self(quiet: bool = False) -> tuple[bool, str]:
     """Install the manager's own desktop shortcut. Returns (success, message)."""
     try:
@@ -87,7 +71,7 @@ def cli_install_self(quiet: bool = False) -> tuple[bool, str]:
         if host.IS_WINDOWS:
             lnk_path = _self_shortcut_path()
             ok = host.write_shortcut(lnk_path, python_exec, f'"{script_path}"',
-                                     icon=_windows_icon(state.SELF_DESKTOP_ICON),
+                                     icon=host.windows_icon(state.SELF_DESKTOP_ICON),
                                      workdir=state.ROOT_DIR)
             if not ok:
                 return False, f"Could not write {lnk_path}"

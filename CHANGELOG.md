@@ -7,6 +7,16 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Added
+- `ToolMetadata.desktop_shortcut`: an `Icon` tool that sets it gets a copy of
+  its Start Menu shortcut on the Windows Desktop. `--remove` deletes the copy.
+  It changes nothing on Linux. New `host.desktop_dir()`.
+
+### Fixed
+- A tool's Start Menu shortcut showed no picture of its own. It now uses the
+  `.ico` at `icon` or beside it, as the installer's own entry has done since
+  0.6.4. The lookup moved from `cli._windows_icon` to `host.windows_icon`.
+
 ## [1.6.1] - 2026-10-17
 
 ### Changed

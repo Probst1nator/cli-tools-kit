@@ -254,6 +254,40 @@ def startup_dir() -> str:
     return os.path.join(start_menu_dir(), "Startup")
 
 
+def desktop_dir() -> str:
+    """The user's Desktop folder.
+
+    Asked from the shell, because OneDrive and group policy often move it away
+    from ``%USERPROFILE%\\Desktop``; that path is the fallback.
+    """
+    try:
+        import ctypes
+        from ctypes import wintypes
+        buf = ctypes.create_unicode_buffer(wintypes.MAX_PATH)
+        # CSIDL_DESKTOPDIRECTORY = 0x10, SHGFP_TYPE_CURRENT = 0
+        if ctypes.windll.shell32.SHGetFolderPathW(None, 0x10, None, 0, buf) == 0 and buf.value:
+            return buf.value
+    except (ImportError, AttributeError, OSError):
+        pass
+    return os.path.join(os.path.expanduser("~"), "Desktop")
+
+
+def windows_icon(icon: Optional[str]) -> Optional[str]:
+    """The .ico Windows can draw for `icon`, or None.
+
+    A .lnk renders only .ico/.exe/.dll; the shell stores a .png path without
+    complaint and then draws nothing. Consumers configure one icon, normally a
+    .png for freedesktop, so take a sibling .ico of the same stem when there is
+    one and otherwise leave the shortcut on its default picture.
+    """
+    if not icon:
+        return None
+    for candidate in (icon, os.path.splitext(icon)[0] + ".ico"):
+        if candidate.lower().endswith(".ico") and os.path.isfile(candidate):
+            return candidate
+    return None
+
+
 def write_shortcut(lnk_path: str, target: str, args: str = "",
                    icon: Optional[str] = None, terminal: bool = False,
                    workdir: Optional[str] = None) -> bool:

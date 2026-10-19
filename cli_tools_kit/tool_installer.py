@@ -8,6 +8,7 @@ Provides a reusable ToolInstaller class that handles:
 
 import os
 import shlex
+import shutil
 import stat
 import subprocess
 import sys
@@ -93,6 +94,9 @@ class ToolMetadata:
     # The installer registers it with each agent harness (cli_tools_kit.mcp_servers).
     mcp_name: Optional[str] = None
     mcp_command: Optional[List[str]] = None
+    # With the Icon tag: a copy of the Start Menu shortcut on the Desktop too
+    # (PROTOCOL.md § Tags). Windows only; on Linux the app-menu entry is it.
+    desktop_shortcut: bool = False
 
 
 class ToolInstaller:
@@ -587,8 +591,13 @@ StartupWMClass={wm_class}
         stem = os.path.splitext(metadata.desktop_file)[0]
         return os.path.join(host.start_menu_dir(), stem + ".lnk")
 
+    def _windows_desktop_path(self, metadata: ToolMetadata) -> str:
+        stem = os.path.splitext(metadata.desktop_file)[0]
+        return os.path.join(host.desktop_dir(), stem + ".lnk")
+
     def _install_windows_shortcut(self, metadata: ToolMetadata) -> None:
-        """A Start Menu .lnk in place of the .desktop file."""
+        """A Start Menu .lnk in place of the .desktop file, and a copy of it on
+        the Desktop when the tool asks for one."""
         lnk_path = self._windows_shortcut_path(metadata)
         args = list(metadata.args or [])
         if metadata.terminal:
@@ -600,11 +609,20 @@ StartupWMClass={wm_class}
             target = sys.executable
             arg_line = " ".join(f'"{a}"' for a in [self.script_path] + args)
         ok = host.write_shortcut(lnk_path, target, arg_line,
+                                 icon=host.windows_icon(metadata.icon),
                                  terminal=metadata.terminal, workdir=self.script_dir)
-        if ok:
-            print(colored(f"Installed: {lnk_path}", "green"))
-        else:
+        if not ok:
             print(colored(f"Warning: could not write {lnk_path}", "yellow"))
+            return
+        print(colored(f"Installed: {lnk_path}", "green"))
+        if metadata.desktop_shortcut:
+            desktop_lnk = self._windows_desktop_path(metadata)
+            try:
+                os.makedirs(os.path.dirname(desktop_lnk), exist_ok=True)
+                shutil.copyfile(lnk_path, desktop_lnk)
+                print(colored(f"Installed: {desktop_lnk}", "green"))
+            except OSError as e:
+                print(colored(f"Warning: could not write {desktop_lnk}: {e}", "yellow"))
 
     def _remove_windows_shortcut(self, metadata: ToolMetadata) -> None:
         lnk_path = self._windows_shortcut_path(metadata)
@@ -612,3 +630,8 @@ StartupWMClass={wm_class}
             print(colored(f"Removed: {lnk_path}", "green"))
         else:
             print(colored(f"Shortcut not found: {lnk_path}", "yellow"))
+        # Also when the tool no longer asks for it: a copy left from an earlier
+        # install would point at an entry that is gone.
+        desktop_lnk = self._windows_desktop_path(metadata)
+        if host.remove_shortcut(desktop_lnk):
+            print(colored(f"Removed: {desktop_lnk}", "green"))
