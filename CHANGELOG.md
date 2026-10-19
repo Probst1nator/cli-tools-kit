@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.7.0] - 2026-10-19
+
 ### Added
 - `ToolMetadata.desktop_shortcut`: an `Icon` tool that sets it gets a copy of
   its Start Menu shortcut on the Windows Desktop. `--remove` deletes the copy.
