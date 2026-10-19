@@ -193,6 +193,51 @@ def test_cli_tool_installs_shims_on_windows(sandbox_home: Path,
     assert not (shim_dir / "fake_tool").exists()
 
 
+def _lnk(arguments: str) -> bytes:
+    """A minimal Unicode .lnk with an ID list, link info, a working dir and
+    arguments, laid out as MS-SHLLINK describes."""
+    flags = 0x01 | 0x02 | 0x10 | 0x20 | 0x80
+    header = (0x4C).to_bytes(4, "little") + bytes(16) + flags.to_bytes(4, "little")
+    header += bytes(0x4C - len(header))
+    id_list = (4).to_bytes(2, "little") + b"\xab" * 4
+    link_info = (8).to_bytes(4, "little") + b"\xcd" * 4
+
+    def string(text: str) -> bytes:
+        return len(text).to_bytes(2, "little") + text.encode("utf-16-le")
+
+    return header + id_list + link_info + string(r"C:\work") + string(arguments)
+
+
+def test_shortcut_arguments_reads_the_lnk(tmp_path: Path) -> None:
+    args = r'"/k" "C:\venv\python.exe" "C:\Tools\ww3claude\main.py"'
+    lnk = tmp_path / "tool.lnk"
+    lnk.write_bytes(_lnk(args))
+    assert host.shortcut_arguments(str(lnk)) == args
+
+    lnk.write_bytes(_lnk(args)[:-10])
+    assert host.shortcut_arguments(str(lnk)) is None
+    lnk.write_bytes(b"[Desktop Entry]\n")
+    assert host.shortcut_arguments(str(lnk)) is None
+    assert host.shortcut_arguments(str(tmp_path / "missing.lnk")) is None
+
+
+def test_a_shortcut_into_another_tools_folder_needs_an_update(
+        sandbox_home: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from cli_tools_kit import install
+    from cli_tools_kit.discovery import ToolEntry
+
+    monkeypatch.setattr(host, "IS_WINDOWS", True)
+    tool = ToolEntry(name="Tool", desktop_file="tool.desktop",
+                     script_path=r"C:\New-Root\tool\main.py", args=[], icon="",
+                     description="", terminal=True, category="", tags=["CLI", "Icon"])
+    lnk = Path(install.tool_shortcut_path(tool))
+    lnk.parent.mkdir(parents=True, exist_ok=True)
+    lnk.write_bytes(_lnk(r'"/k" "C:\py.exe" "C:\Old-Root\tool\main.py"'))
+    assert install.needs_update(tool)
+    lnk.write_bytes(_lnk(r'"/k" "C:\py.exe" "C:\New-Root\tool\main.py"'))
+    assert not install.needs_update(tool)
+
+
 @pytest.mark.parametrize("on_desktop", [True, False])
 def test_icon_tool_gets_its_ico_and_a_desktop_copy_on_windows(
         sandbox_home: Path, monkeypatch: pytest.MonkeyPatch, on_desktop: bool) -> None:

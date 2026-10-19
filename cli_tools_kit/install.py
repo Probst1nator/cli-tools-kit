@@ -152,7 +152,12 @@ def needs_update(tool: discovery.ToolEntry) -> bool:
     has_icon = "Icon" in tool.tags
     if has_icon:
         if host.IS_WINDOWS:
-            return False  # a .lnk is binary; nothing to compare the path against
+            # The .lnk names the script in its Arguments field. A shortcut that
+            # points into another tools folder (the root moved) is stale.
+            args = host.shortcut_arguments(tool_shortcut_path(tool))
+            if args is None:
+                return False
+            return os.path.normcase(tool.script_path) not in os.path.normcase(args)
         # For desktop files, check if the Exec path matches the current script path
         desktop_path = os.path.join(state.APPS_DIR, tool.desktop_file)
         if not os.path.exists(desktop_path):

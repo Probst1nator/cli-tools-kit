@@ -128,7 +128,6 @@ def test_a_renamed_alias_needs_an_update(engine) -> None:
     assert engine.needs_update(tool._replace(alias="clitool2"))
 
 
-@pytest.mark.skipif(os.name == "nt", reason="a .lnk is binary; needs_update skips it")
 def test_a_moved_script_needs_an_update(engine) -> None:
     tool = _tools(engine)["guitool"]
     assert engine.install_tool(tool, skip_deps=True)[0]
@@ -277,7 +276,6 @@ def test_check_removes_what_a_deleted_tool_left(engine, fake_tree: Path, monkeyp
     assert engine.find_orphan_desktop_files() == []
 
 
-@pytest.mark.skipif(os.name == "nt", reason="a .lnk is binary; needs_update skips it")
 def test_check_rewrites_a_moved_tool_instead_of_removing_it(engine, fake_tree: Path,
                                                             monkeypatch) -> None:
     """The old shortcut points at a missing main.py, like an orphan's. The

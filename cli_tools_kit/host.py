@@ -331,6 +331,45 @@ def write_shortcut(lnk_path: str, target: str, args: str = "",
         return False
 
 
+def shortcut_arguments(lnk_path: str) -> Optional[str]:
+    """The Arguments field of a .lnk, or None when it cannot be read.
+
+    Parsed from the file (MS-SHLLINK) rather than through WScript.Shell, so
+    asking about every installed row does not start PowerShell once per row.
+    """
+    try:
+        with open(lnk_path, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    try:
+        if int.from_bytes(data[0:4], "little") != 0x4C:
+            return None
+        flags = int.from_bytes(data[20:24], "little")
+        pos = 0x4C
+        if flags & 0x01:  # HasLinkTargetIDList
+            pos += 2 + int.from_bytes(data[pos:pos + 2], "little")
+        if flags & 0x02:  # HasLinkInfo
+            pos += int.from_bytes(data[pos:pos + 4], "little")
+        unicode = bool(flags & 0x80)
+        # StringData: name, relative path, working dir, arguments, icon location,
+        # each present only when its flag is set.
+        for bit in (0x04, 0x08, 0x10, 0x20):
+            if not flags & bit:
+                continue
+            count = int.from_bytes(data[pos:pos + 2], "little")
+            size = count * 2 if unicode else count
+            raw = data[pos + 2:pos + 2 + size]
+            if len(raw) != size:
+                return None
+            pos += 2 + size
+            if bit == 0x20:
+                return raw.decode("utf-16-le" if unicode else "mbcs" if IS_WINDOWS else "latin-1")
+        return ""
+    except (ValueError, LookupError):
+        return None
+
+
 def remove_shortcut(lnk_path: str) -> bool:
     """Delete a .lnk. True if one was there."""
     try:

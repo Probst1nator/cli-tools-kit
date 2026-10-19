@@ -7,6 +7,13 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Fixed
+- On Windows, a Start Menu shortcut that points at a script in another tools
+  folder (the root moved, or a second installer wrote it) now needs an update.
+  `needs_update` used to answer False for every Windows shortcut, so
+  `--apply`, `--update-all` and `--check` left such a shortcut alone. New
+  `host.shortcut_arguments()` reads the Arguments field out of the `.lnk`.
+
 ## [1.7.0] - 2026-10-19
 
 ### Added
