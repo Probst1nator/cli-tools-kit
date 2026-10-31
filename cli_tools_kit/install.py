@@ -189,6 +189,23 @@ def needs_update(tool: discovery.ToolEntry) -> bool:
         return tool.alias not in aliases_for_script  # installed under a different name → rename
 
 
+def lifecycle_args(tool: discovery.ToolEntry) -> list:
+    """The part of a tool's args that belongs on --install, --remove,
+    --install-skill and --uninstall-skill.
+
+    ``tool.args`` is how the tool is launched (``--gui``, ``--repl``,
+    ``--serve``). Appended to a lifecycle flag it can win over that flag: the
+    tool opens its window instead of installing or removing anything, and the
+    run still ends with exit code 0. Only the plugin config-dir pair, which
+    picks where a plugin row installs, is passed on.
+    """
+    args = list(tool.args)
+    if plugins.CONFIG_DIR_ARG in args:
+        i = args.index(plugins.CONFIG_DIR_ARG)
+        return args[i:i + 2]
+    return []
+
+
 def install_tool(tool: discovery.ToolEntry, skip_deps: bool = False) -> tuple[bool, str]:
     """Invokes the tool's own --install argument. Returns (success, output).
 
@@ -197,7 +214,7 @@ def install_tool(tool: discovery.ToolEntry, skip_deps: bool = False) -> tuple[bo
     running 'pip install'. This keeps a shortcut refresh local and network-free.
     """
     try:
-        cmd = [sys.executable, tool.script_path, "--install"] + tool.args
+        cmd = [sys.executable, tool.script_path, "--install"] + lifecycle_args(tool)
         env = os.environ.copy()
         # The tool writes its own .desktop and alias via ToolInstaller, so it
         # needs to know which installer asked — otherwise a third-party org's
@@ -221,7 +238,7 @@ def install_tool(tool: discovery.ToolEntry, skip_deps: bool = False) -> tuple[bo
 def remove_tool(tool: discovery.ToolEntry) -> tuple[bool, str]:
     """Invokes the tool's own --remove argument. Returns (success, output)."""
     try:
-        cmd = [sys.executable, tool.script_path, "--remove"] + tool.args
+        cmd = [sys.executable, tool.script_path, "--remove"] + lifecycle_args(tool)
         env = os.environ.copy()
         env.update(state.IDENTITY.env())   # remove the alias from OUR alias file
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
@@ -244,7 +261,7 @@ def install_skill_for_tool(tool: discovery.ToolEntry) -> tuple[bool, str]:
     detect an up-to-date SKILL.md and no-op.
     """
     try:
-        cmd = [sys.executable, tool.script_path, "--install-skill"] + tool.args
+        cmd = [sys.executable, tool.script_path, "--install-skill"] + lifecycle_args(tool)
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
                                 capture_output=True, encoding="utf-8", errors="replace",
                                 env=host.child_env())
@@ -259,7 +276,7 @@ def install_skill_for_tool(tool: discovery.ToolEntry) -> tuple[bool, str]:
 def uninstall_skill_for_tool(tool: discovery.ToolEntry) -> tuple[bool, str]:
     """Invokes the tool's --uninstall-skill argument. Returns (success, output)."""
     try:
-        cmd = [sys.executable, tool.script_path, "--uninstall-skill"] + tool.args
+        cmd = [sys.executable, tool.script_path, "--uninstall-skill"] + lifecycle_args(tool)
         result = subprocess.run(cmd, cwd=os.path.dirname(tool.script_path),
                                 capture_output=True, encoding="utf-8", errors="replace",
                                 env=host.child_env())

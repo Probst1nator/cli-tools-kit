@@ -7,6 +7,14 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+### Fixed
+- `--install`, `--remove`, `--install-skill` and `--uninstall-skill` no longer
+  get the tool's launch args appended. A tool that launches with `--gui`
+  (studon-client) opened its window instead of removing its skill, exited 0, and
+  the installer reported success while the skill file stayed; the opencode step
+  then failed because it still found that file. Only the plugin
+  `--claude-config-dir` pair is passed on now (new `install.lifecycle_args`).
+
 ### Added
 - An offered upgrade lists the titles of the commits it brings, newest first:
   in the confirmation, the update badge's tooltip, the text screen and
