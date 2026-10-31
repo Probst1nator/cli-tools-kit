@@ -113,6 +113,35 @@ def installer_help() -> str:
     return result.stdout
 
 
+def test_monkeypatch_through_gui_installer_puts_the_moved_name_back(engine_state) -> None:
+    """pytest 9.2's undo deleted a moved name from the module holding it,
+    because gui_installer's own __dict__ never had it."""
+    from cli_tools_kit import install, state
+
+    before = (install.install_tool, state.DISCOVERY_ROOTS)
+    mp = pytest.MonkeyPatch()
+    mp.setattr(gui_installer, "install_tool", lambda *a, **k: (True, ""))
+    mp.setattr(gui_installer, "DISCOVERY_ROOTS", ["/x"])
+    assert state.DISCOVERY_ROOTS == ["/x"]
+    mp.undo()
+    assert (install.install_tool, state.DISCOVERY_ROOTS) == before
+    assert gui_installer.install_tool is install.install_tool
+
+
+def test_a_name_its_module_dropped_becomes_gui_installers_own(engine_state) -> None:
+    from cli_tools_kit import state
+
+    del state.DISCOVERY_ROOTS
+    assert not hasattr(gui_installer, "DISCOVERY_ROOTS")
+    gui_installer.DISCOVERY_ROOTS = ["/own"]
+    assert gui_installer.DISCOVERY_ROOTS == ["/own"]
+    assert not hasattr(state, "DISCOVERY_ROOTS")
+    del gui_installer.DISCOVERY_ROOTS
+    assert not hasattr(gui_installer, "DISCOVERY_ROOTS")
+    with pytest.raises(AttributeError):
+        del gui_installer.DISCOVERY_ROOTS
+
+
 def test_the_engine_globals_are_reachable_through_gui_installer(engine_state) -> None:
     """The names moved out of gui_installer still read and assign through it."""
     for module in gui_installer._ENGINE_MODULES:

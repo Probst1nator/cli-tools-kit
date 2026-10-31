@@ -14,6 +14,14 @@ Stability for what counts as the public surface.
   the installer reported success while the skill file stayed; the opencode step
   then failed because it still found that file. Only the plugin
   `--claude-config-dir` pair is passed on now (new `install.lifecycle_args`).
+- `monkeypatch.setattr(gui_installer, name, ...)` with pytest 9.2 or newer no
+  longer deletes `name` from the engine module that holds it when the patch is
+  undone. pytest now saves the old value from `gui_installer.__dict__`, where a
+  moved name (`install_tool`, `DISCOVERY_ROOTS`, ...) is not; its undo then
+  deleted the real one, and every later test that used it failed. Each moved
+  name is now a data descriptor on the module's class, so pytest saves and puts
+  back the real value. Wrappers whose tests patch through `gui_installer` are
+  covered too.
 
 ### Added
 - An offered upgrade lists the titles of the commits it brings, newest first:

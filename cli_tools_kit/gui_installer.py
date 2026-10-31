@@ -4526,6 +4526,33 @@ def _home_of(name: str):
     return None
 
 
+class _Forwarded:
+    """One moved name on the module's class.
+
+    A data descriptor, so ``getattr`` and ``setattr`` on the module take the
+    same path. pytest's monkeypatch (9.2+) saves the old value from the
+    module's own ``__dict__`` unless the name is a data descriptor; without
+    this it found nothing there, and its undo deleted the name from the module
+    that holds it.
+    """
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def __get__(self, module, owner=None):
+        if module is None:
+            return self
+        if self.name in module.__dict__:
+            return module.__dict__[self.name]
+        return module.__getattr__(self.name)
+
+    def __set__(self, module, value):
+        module.__setattr__(self.name, value)
+
+    def __delete__(self, module):
+        module.__delattr__(self.name)
+
+
 class _EngineModule(type(sys)):
     def __getattr__(self, name):
         home = _home_of(name)
@@ -4533,20 +4560,37 @@ class _EngineModule(type(sys)):
             raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
         return getattr(home, name)
 
+    # A name held here, or one no module holds any more, is this module's own.
+    # The descriptor of a moved name would send super() straight back here,
+    # so such a name goes into __dict__ directly.
+
     def __setattr__(self, name, value):
         home = None if name in self.__dict__ else _home_of(name)
-        if home is None:
-            super().__setattr__(name, value)
-        else:
+        if home is not None:
             setattr(home, name, value)
+        elif isinstance(vars(_EngineModule).get(name), _Forwarded):
+            self.__dict__[name] = value
+        else:
+            super().__setattr__(name, value)
 
     def __delattr__(self, name):
         home = None if name in self.__dict__ else _home_of(name)
-        if home is None:
-            super().__delattr__(name)
-        else:
+        if home is not None:
             delattr(home, name)
+        elif isinstance(vars(_EngineModule).get(name), _Forwarded):
+            if name not in self.__dict__:
+                raise AttributeError(f"module {self.__name__!r} has no attribute {name!r}")
+            del self.__dict__[name]
+        else:
+            super().__delattr__(name)
 
+
+for _module in _ENGINE_MODULES:
+    for _name in list(vars(_module)):
+        if (not _name.startswith("__") and _name not in globals()
+                and not hasattr(_EngineModule, _name)):
+            setattr(_EngineModule, _name, _Forwarded(_name))
+del _module, _name
 
 sys.modules[__name__].__class__ = _EngineModule
 
