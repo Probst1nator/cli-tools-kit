@@ -8,6 +8,10 @@ Stability for what counts as the public surface.
 ## [Unreleased]
 
 ### Fixed
+- The installer's search bar and its clear button no longer stay near-black in
+  the Light theme. They used the log pane's `log_bg`, which is dark in every
+  theme, so the placeholder and typed text were hard to read; they now use the
+  theme's `panel` surface.
 - `--install`, `--remove`, `--install-skill` and `--uninstall-skill` no longer
   get the tool's launch args appended. A tool that launches with `--gui`
   (studon-client) opened its window instead of removing its skill, exited 0, and

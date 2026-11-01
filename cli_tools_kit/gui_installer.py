@@ -893,7 +893,7 @@ class InstallerApp:
 
         self.search_entry = tk.Entry(
             search_frame, textvariable=self.search_var,
-            font=("", 11), bg=t["log_bg"], fg=t["fg"],
+            font=("", 11), bg=t["panel"], fg=t["fg"],
             insertbackground=t["fg"], relief="flat",
             highlightthickness=1, highlightcolor=t["accent"],
             highlightbackground=t["muted"],
@@ -938,8 +938,8 @@ class InstallerApp:
         self.search_clear_btn = tk.Button(
             search_frame, text="✕", font=("", 10),
             relief="flat", bd=0, highlightthickness=0,
-            bg=t["log_bg"], fg=t["muted"],
-            activebackground=t["log_bg"], activeforeground=t["fg"],
+            bg=t["panel"], fg=t["muted"],
+            activebackground=t["panel"], activeforeground=t["fg"],
             cursor="hand2",
             command=self._clear_search,
         )
