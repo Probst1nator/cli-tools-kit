@@ -99,10 +99,12 @@ def find_orphan_desktop_files() -> List[OrphanDesktopFile]:
                         tool_path = os.path.dirname(part)
                         break
 
-        # Check if tool still exists
+        # Check if tool still exists: main.py or <dirname>.py with dashes as
+        # underscores, the two entry points the walker accepts. A tool that runs
+        # studon_client.py from studon-client/ is not an orphan.
         if tool_path:
-            main_py = os.path.join(tool_path, 'main.py')
-            if not os.path.exists(main_py):
+            own = os.path.basename(tool_path.rstrip(os.sep)).replace('-', '_') + '.py'
+            if not any(os.path.exists(os.path.join(tool_path, n)) for n in ('main.py', own)):
                 orphans.append(OrphanDesktopFile(
                     path=desktop_path,
                     name=name,

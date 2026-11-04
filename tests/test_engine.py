@@ -230,6 +230,14 @@ def test_a_deleted_tool_leaves_an_orphan_that_cleanup_removes(engine, fake_tree:
     assert engine.find_orphan_desktop_files() == []
 
 
+@POSIX_ONLY
+def test_a_shortcut_to_a_dirname_script_is_not_an_orphan(engine, fake_tree: Path) -> None:
+    """The walker accepts <dirname>.py next to requirements.txt; the sweep must too."""
+    assert engine.install_tool(_tools(engine)["guitool"], skip_deps=True)[0]
+    (fake_tree / "guitool" / "main.py").rename(fake_tree / "guitool" / "guitool.py")
+    assert engine.find_orphan_desktop_files() == []
+
+
 def test_update_all_reinstalls_what_is_installed(engine, monkeypatch) -> None:
     tools = _tools(engine)
     assert engine.install_tool(tools["clitool"], skip_deps=True)[0]

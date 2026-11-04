@@ -8,6 +8,10 @@ Stability for what counts as the public surface.
 ## [Unreleased]
 
 ### Fixed
+- The orphan sweep no longer counts a shortcut as orphaned when its tool runs
+  `<dirname>.py` (dashes as underscores) instead of `main.py`, the second entry
+  point the walker accepts. It deleted studon-client's `studon_client.desktop`
+  as "tool dir missing" while the directory and `studon_client.py` were there.
 - The installer's search bar and its clear button no longer stay near-black in
   the Light theme. They used the log pane's `log_bg`, which is dark in every
   theme, so the placeholder and typed text were hard to read; they now use the
