@@ -7,6 +7,8 @@ Stability for what counts as the public surface.
 
 ## [Unreleased]
 
+## [1.7.2] - 2026-11-08
+
 ### Fixed
 - The orphan sweep no longer counts a shortcut as orphaned when its tool runs
   `<dirname>.py` (dashes as underscores) instead of `main.py`, the second entry
